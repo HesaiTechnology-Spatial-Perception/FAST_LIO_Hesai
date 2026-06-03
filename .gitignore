@@ -1,4 +1,6 @@
-build
+build/
+install/
+log/
 Log/*.png
 Log/*.txt
 Log/*.csv
@@ -6,3 +8,5 @@ Log/*.pdf
 .vscode/c_cpp_properties.json
 .vscode/settings.json
 PCD/*.pcd
+tools/__pycache__/check_config.cpython-310.pyc
+tools/__pycache__/check_input.cpython-310.pyc

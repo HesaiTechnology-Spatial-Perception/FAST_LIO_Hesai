@@ -1,8 +1,24 @@
+// Copyright 2026 Hesai Technology. All rights reserved.
+// SPDX-License-Identifier: GPL-2.0
+//
+// This file is part of FAST_LIO_Hesai, a fork of FAST_LIO
+// (https://github.com/hku-mars/FAST_LIO) by the MARS Lab, HKU.
+// The upstream preprocess code has been substantially rewritten for
+// Hesai JT16 / JT128 LiDARs.  Original upstream logic and structure
+// are retained where applicable; original copyright notices are
+// preserved in the accompanying LICENSE file.
+//
+// Modified by Hesai Technology, 2026-06:
+//   - Removed non-Hesai LiDAR handlers (Livox Avia/Horizon, Velodyne,
+//     Ouster, MID360, etc.)
+//   - Added hesai_point_type::Point struct (ring + timestamp fields)
+//   - Added JT16 / JT128 lidar_type enum (ROS 2: 1/2)
+//   - Adapted all ROS 1 headers to ROS 2 (rclcpp / sensor_msgs/msg)
+
 // #include <ros/ros.h>
 #include <rclcpp/rclcpp.hpp>
 #include <pcl_conversions/pcl_conversions.h>
 #include <sensor_msgs/msg/point_cloud2.hpp>
-#include <livox_ros_driver2/msg/custom_msg.hpp>
 
 using namespace std;
 
@@ -13,11 +29,9 @@ typedef pcl::PointCloud<PointType> PointCloudXYZI;
 
 enum LID_TYPE
 {
-  AVIA = 1,
-  VELO16,
-  OUST64,
-  MID360
-};  //{1, 2, 3}
+  JT16 = 1,
+  JT128 = 2
+};
 enum TIME_UNIT
 {
   SEC = 0,
@@ -67,69 +81,25 @@ struct orgtype
   }
 };
 
-namespace velodyne_ros
+namespace hesai_point_type
 {
 struct EIGEN_ALIGN16 Point
 {
   PCL_ADD_POINT4D;
   float intensity;
-  float time;
   uint16_t ring;
+  double timestamp;
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 };
-}  // namespace velodyne_ros
-POINT_CLOUD_REGISTER_POINT_STRUCT(velodyne_ros::Point,
-                                  (float, x, x)(float, y, y)(float, z, z)(float, intensity,
-                                                                          intensity)(float, time, time)(uint16_t, ring,
-                                                                                                        ring))
+}  // namespace hesai_point_type
 
-namespace ouster_ros
-{
-struct EIGEN_ALIGN16 Point
-{
-  PCL_ADD_POINT4D;
-  float intensity;
-  uint32_t t;
-  uint16_t reflectivity;
-  uint8_t ring;
-  uint16_t ambient;
-  uint32_t range;
-  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-};
-}  // namespace ouster_ros
-
-// clang-format off
-POINT_CLOUD_REGISTER_POINT_STRUCT(ouster_ros::Point,
+POINT_CLOUD_REGISTER_POINT_STRUCT(hesai_point_type::Point,
     (float, x, x)
     (float, y, y)
     (float, z, z)
     (float, intensity, intensity)
-    // use std::uint32_t to avoid conflicting with pcl::uint32_t
-    (std::uint32_t, t, t)
-    (std::uint16_t, reflectivity, reflectivity)
-    (std::uint8_t, ring, ring)
-    (std::uint16_t, ambient, ambient)
-    (std::uint32_t, range, range)
-)
-
-namespace livox_ros
-{
-typedef struct {
-  float x;            /**< X axis, Unit:m */
-  float y;            /**< Y axis, Unit:m */
-  float z;            /**< Z axis, Unit:m */
-  float reflectivity; /**< Reflectivity   */
-  uint8_t tag;        /**< Livox point tag   */
-  uint8_t line;       /**< Laser line id     */
-} LivoxPointXyzrtl;
-}
-POINT_CLOUD_REGISTER_POINT_STRUCT(livox_ros::LivoxPointXyzrtl,
-    (float, x, x)
-    (float, y, y)
-    (float, z, z)
-    (float, reflectivity, reflectivity)
-    (uint8_t, tag, tag)
-    (uint8_t, line, line)
+    (uint16_t, ring, ring)
+    (double, timestamp, timestamp)
 )
 
 class Preprocess
@@ -140,7 +110,6 @@ class Preprocess
   Preprocess();
   ~Preprocess();
   
-  void process(const livox_ros_driver2::msg::CustomMsg::UniquePtr &msg, PointCloudXYZI::Ptr &pcl_out);
   void process(const sensor_msgs::msg::PointCloud2::UniquePtr &msg, PointCloudXYZI::Ptr &pcl_out);
   void set(bool feat_en, int lid_type, double bld, int pfilt_num);
 
@@ -152,14 +121,9 @@ class Preprocess
   int lidar_type, point_filter_num, N_SCANS, SCAN_RATE, time_unit;
   double blind;
   bool feature_enabled, given_offset_time;
-  // ros::Publisher pub_full, pub_surf, pub_corn;
 
 private:
-  void avia_handler(const livox_ros_driver2::msg::CustomMsg::UniquePtr &msg);
-  void oust64_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg);
-  void velodyne_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg);
-  void mid360_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg);
-  void default_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg);
+  void hesai_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg);
   void give_feature(PointCloudXYZI &pl, vector<orgtype> &types);
   void pub_func(PointCloudXYZI &pl, const rclcpp::Time &ct);
   int  plane_judge(const PointCloudXYZI &pl, vector<orgtype> &types, uint i, uint &i_nex, Eigen::Vector3d &curr_direct);

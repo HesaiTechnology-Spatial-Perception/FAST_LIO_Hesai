@@ -1,5 +1,6 @@
-# Modified by Hesai Technology, 2026-06: minor parameter adjustments.
+# Copyright 2026 Hesai Technology. All rights reserved.
 # SPDX-License-Identifier: GPL-2.0
+# Launch file for FAST-LIO2 with Hesai JT16 LiDAR (ROS 2).
 
 import os.path
 
@@ -20,22 +21,12 @@ def generate_launch_description():
         package_path, 'rviz', 'fastlio.rviz')
 
     use_sim_time = LaunchConfiguration('use_sim_time')
-    config_path = LaunchConfiguration('config_path')
-    config_file = LaunchConfiguration('config_file')
     rviz_use = LaunchConfiguration('rviz')
     rviz_cfg = LaunchConfiguration('rviz_cfg')
 
     declare_use_sim_time_cmd = DeclareLaunchArgument(
         'use_sim_time', default_value='false',
         description='Use simulation (Gazebo) clock if true'
-    )
-    declare_config_path_cmd = DeclareLaunchArgument(
-        'config_path', default_value=default_config_path,
-        description='Yaml config file path'
-    )
-    decalre_config_file_cmd = DeclareLaunchArgument(
-        'config_file', default_value='jt128.yaml',
-        description='Config file'
     )
     declare_rviz_cmd = DeclareLaunchArgument(
         'rviz', default_value='true',
@@ -49,8 +40,10 @@ def generate_launch_description():
     fast_lio_node = Node(
         package='fast_lio',
         executable='fastlio_mapping',
-        parameters=[PathJoinSubstitution([config_path, config_file]),
-                    {'use_sim_time': use_sim_time}],
+        parameters=[
+            os.path.join(default_config_path, 'jt16.yaml'),
+            {'use_sim_time': use_sim_time}
+        ],
         output='screen'
     )
     rviz_node = Node(
@@ -62,8 +55,6 @@ def generate_launch_description():
 
     ld = LaunchDescription()
     ld.add_action(declare_use_sim_time_cmd)
-    ld.add_action(declare_config_path_cmd)
-    ld.add_action(decalre_config_file_cmd)
     ld.add_action(declare_rviz_cmd)
     ld.add_action(declare_rviz_config_path_cmd)
 

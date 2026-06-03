@@ -5,17 +5,14 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
-ADD_COMPILE_OPTIONS(-std=c++14)
-ADD_COMPILE_OPTIONS(-std=c++14)
-set(CMAKE_CXX_FLAGS "-std=c++14 -O3")
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -pthread -fexceptions")
 
 add_definitions(-DROOT_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/\")
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fexceptions")
-set(CMAKE_CXX_STANDARD 14)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14 -pthread -std=c++0x -std=c++14 -fexceptions")
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 message("Current CPU archtecture: ${CMAKE_SYSTEM_PROCESSOR}")
@@ -59,7 +56,6 @@ find_package(std_srvs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(pcl_ros REQUIRED)
 find_package(pcl_conversions REQUIRED)
-find_package(livox_ros_driver2 REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 
 set(dependencies
@@ -73,7 +69,6 @@ set(dependencies
   visualization_msgs
   pcl_ros
   pcl_conversions
-  livox_ros_driver2
 )
 
 # Thirdparty libraries
@@ -117,6 +112,15 @@ ament_target_dependencies(fastlio_mapping ${dependencies})
 
 # ---------------- Install --------------- #
 install(TARGETS fastlio_mapping
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+install(PROGRAMS
+  tools/check_input.py
+  tools/check_config.py
+  tools/check_map.py
+  tools/pcap_to_rosbag/pcap_to_rosbag_ros1.sh
+  tools/pcap_to_rosbag/pcap_to_rosbag_ros2.sh
   DESTINATION lib/${PROJECT_NAME}
 )
 
