@@ -42,6 +42,15 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS}   ${OpenMP_C_FLAGS}")
 find_package(PythonLibs REQUIRED)
 find_path(MATPLOTLIB_CPP_INCLUDE_DIRS "matplotlibcpp.h")
 
+find_package(livox_ros_driver QUIET)
+if(livox_ros_driver_FOUND)
+  add_definitions(-DFAST_LIO_ENABLE_LIVOX)
+  set(FAST_LIO_LIVOX_COMPONENT livox_ros_driver)
+  message(STATUS "Livox support enabled")
+else()
+  message(STATUS "Livox support disabled: livox_ros_driver not found")
+endif()
+
 find_package(catkin REQUIRED COMPONENTS
   geometry_msgs
   nav_msgs
@@ -49,9 +58,10 @@ find_package(catkin REQUIRED COMPONENTS
   roscpp
   rospy
   std_msgs
+  std_srvs
   pcl_ros
   tf
-  livox_ros_driver
+  ${FAST_LIO_LIVOX_COMPONENT}
   message_generation
   eigen_conversions
 )
@@ -79,7 +89,7 @@ generate_messages(
 )
 
 catkin_package(
-  CATKIN_DEPENDS geometry_msgs nav_msgs roscpp rospy std_msgs message_runtime
+  CATKIN_DEPENDS geometry_msgs nav_msgs roscpp rospy std_msgs std_srvs message_runtime
   DEPENDS EIGEN3 PCL
   INCLUDE_DIRS
 )
@@ -87,3 +97,17 @@ catkin_package(
 add_executable(fastlio_mapping src/laserMapping.cpp include/ikd-Tree/ikd_Tree.cpp src/preprocess.cpp)
 target_link_libraries(fastlio_mapping ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${PYTHON_LIBRARIES})
 target_include_directories(fastlio_mapping PRIVATE ${PYTHON_INCLUDE_DIRS})
+
+# ---------------- Install tools --------------- #
+catkin_install_python(PROGRAMS
+  tools/check_input.py
+  tools/check_config.py
+  tools/check_map.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
+
+install(PROGRAMS
+  tools/pcap_to_rosbag/pcap_to_rosbag_ros1.sh
+  tools/pcap_to_rosbag/pcap_to_rosbag_ros2.sh
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)

@@ -12,7 +12,7 @@
 
   <maintainer email="dev@livoxtech.com">claydergc</maintainer>
 
-  <license>BSD</license>
+  <license>GPL-2.0</license>
 
   <author email="zhangji@cmu.edu">Ji Zhang</author>
   
@@ -22,10 +22,10 @@
   <build_depend>roscpp</build_depend>
   <build_depend>rospy</build_depend>
   <build_depend>std_msgs</build_depend>
+  <build_depend>std_srvs</build_depend>
   <build_depend>sensor_msgs</build_depend>
   <build_depend>tf</build_depend>
   <build_depend>pcl_ros</build_depend>
-  <build_depend>livox_ros_driver</build_depend>
   <build_depend>message_generation</build_depend>
 
   <run_depend>geometry_msgs</run_depend>
@@ -34,9 +34,10 @@
   <run_depend>roscpp</run_depend>
   <run_depend>rospy</run_depend>
   <run_depend>std_msgs</run_depend>
+  <run_depend>std_srvs</run_depend>
   <run_depend>tf</run_depend>
   <run_depend>pcl_ros</run_depend>
-  <run_depend>livox_ros_driver</run_depend>
+  <run_depend>hesai_ros_driver</run_depend>
   <run_depend>message_runtime</run_depend>
 
   <test_depend>rostest</test_depend>

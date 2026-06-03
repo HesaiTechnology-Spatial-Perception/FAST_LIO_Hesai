@@ -9,6 +9,10 @@
 // Further contributions copyright (c) 2016, Southwest Research Institute
 // All rights reserved.
 //
+// Modified by Hesai Technology, 2026-06.
+// Modifications: adapted for Hesai JT16 / JT128 LiDARs; added /map_save
+// service and pcd_save support; added imu_gyr_unit (deg/rad) parameter.
+//
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are met:
 //
@@ -46,6 +50,7 @@
 #include "IMU_Processing.hpp"
 #include <nav_msgs/Odometry.h>
 #include <nav_msgs/Path.h>
+#include <std_srvs/Trigger.h>
 #include <visualization_msgs/Marker.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/point_cloud.h>
@@ -56,7 +61,9 @@
 #include <tf/transform_datatypes.h>
 #include <tf/transform_broadcaster.h>
 #include <geometry_msgs/Vector3.h>
+#ifdef FAST_LIO_ENABLE_LIVOX
 #include <livox_ros_driver/CustomMsg.h>
+#endif
 #include "preprocess.h"
 #include <ikd-Tree/ikd_Tree.h>
 
@@ -94,6 +101,8 @@ int    iterCount = 0, feats_down_size = 0, NUM_MAX_ITERATIONS = 0, laserCloudVal
 bool   point_selected_surf[100000] = {0};
 bool   lidar_pushed, flg_first_scan = true, flg_exit = false, flg_EKF_inited;
 bool   scan_pub_en = false, dense_pub_en = false, scan_body_pub_en = false;
+int lidar_type;
+bool imu_gyr_is_deg = false;
 
 vector<vector<int>>  pointSearchInd_surf; 
 vector<BoxPointType> cub_needrm;
@@ -298,6 +307,7 @@ void standard_pcl_cbk(const sensor_msgs::PointCloud2::ConstPtr &msg)
 
 double timediff_lidar_wrt_imu = 0.0;
 bool   timediff_set_flg = false;
+#ifdef FAST_LIO_ENABLE_LIVOX
 void livox_pcl_cbk(const livox_ros_driver::CustomMsg::ConstPtr &msg) 
 {
     mtx_buffer.lock();
@@ -331,6 +341,7 @@ void livox_pcl_cbk(const livox_ros_driver::CustomMsg::ConstPtr &msg)
     mtx_buffer.unlock();
     sig_buffer.notify_all();
 }
+#endif
 
 void imu_cbk(const sensor_msgs::Imu::ConstPtr &msg_in) 
 {
@@ -343,6 +354,13 @@ void imu_cbk(const sensor_msgs::Imu::ConstPtr &msg_in)
     {
         msg->header.stamp = \
         ros::Time().fromSec(timediff_lidar_wrt_imu + msg_in->header.stamp.toSec());
+    }
+
+    if (imu_gyr_is_deg)
+    {
+        msg->angular_velocity.x *= M_PI / 180.0;
+        msg->angular_velocity.y *= M_PI / 180.0;
+        msg->angular_velocity.z *= M_PI / 180.0;
     }
 
     double timestamp = msg->header.stamp.toSec();
@@ -375,6 +393,8 @@ bool sync_packages(MeasureGroup &meas)
     {
         meas.lidar = lidar_buffer.front();
         meas.lidar_beg_time = time_buffer.front();
+
+
         if (meas.lidar->points.size() <= 1) // time too little
         {
             lidar_end_time = meas.lidar_beg_time + lidar_mean_scantime;
@@ -390,6 +410,8 @@ bool sync_packages(MeasureGroup &meas)
             lidar_end_time = meas.lidar_beg_time + meas.lidar->points.back().curvature / double(1000);
             lidar_mean_scantime += (meas.lidar->points.back().curvature / double(1000) - lidar_mean_scantime) / scan_num;
         }
+        if(lidar_type == MARSIM)
+            lidar_end_time = meas.lidar_beg_time;
 
         meas.lidar_end_time = lidar_end_time;
 
@@ -566,6 +588,65 @@ void publish_map(const ros::Publisher & pubLaserCloudMap)
     laserCloudMap.header.stamp = ros::Time().fromSec(lidar_end_time);
     laserCloudMap.header.frame_id = "camera_init";
     pubLaserCloudMap.publish(laserCloudMap);
+}
+
+// Save the accumulated point cloud buffer to disk.
+// Resolves the output path in this priority:
+//   1. `map_file_path` from yaml (absolute path used as-is; relative path joined with ROOT_DIR)
+//   2. fallback: <ROOT_DIR>/PCD/scans.pcd
+// Returns true on a successful write of a non-empty buffer.
+bool save_to_pcd(std::string & out_path)
+{
+    if (pcl_wait_save->empty()) {
+        out_path.clear();
+        return false;
+    }
+
+    if (!map_file_path.empty()) {
+        out_path = (map_file_path.front() == '/')
+                       ? map_file_path
+                       : std::string(ROOT_DIR) + map_file_path;
+    } else {
+        out_path = std::string(ROOT_DIR) + "PCD/scans.pcd";
+    }
+
+    pcl::PCDWriter pcd_writer;
+    int ret = pcd_writer.writeBinary(out_path, *pcl_wait_save);
+    return ret == 0;
+}
+
+// std_srvs/Trigger callback exposed at the `map_save` service.
+// Mirrors the ROS 2 branch behaviour so external tools can flush
+// the accumulated PCD without having to shut the node down.
+bool map_save_callback(std_srvs::Trigger::Request & /*req*/,
+                       std_srvs::Trigger::Response & res)
+{
+    if (!pcd_save_en) {
+        res.success = false;
+        res.message = "pcd_save_en is false; enable it in yaml to use /map_save.";
+        ROS_WARN_STREAM("[map_save] " << res.message);
+        return true;
+    }
+    if (pcl_wait_save->empty()) {
+        res.success = false;
+        res.message = "No points buffered yet; let FAST-LIO2 run for a while first.";
+        ROS_WARN_STREAM("[map_save] " << res.message);
+        return true;
+    }
+
+    std::string saved_path;
+    const size_t pt_count = pcl_wait_save->size();
+    bool ok = save_to_pcd(saved_path);
+    if (ok) {
+        res.success = true;
+        res.message = "Saved " + std::to_string(pt_count) + " points to " + saved_path;
+        ROS_INFO_STREAM("[map_save] " << res.message);
+    } else {
+        res.success = false;
+        res.message = "Failed to write PCD to " + saved_path;
+        ROS_ERROR_STREAM("[map_save] " << res.message);
+    }
+    return true;
 }
 
 template<typename T>
@@ -774,18 +855,23 @@ int main(int argc, char** argv)
     nh.param<double>("mapping/b_gyr_cov",b_gyr_cov,0.0001);
     nh.param<double>("mapping/b_acc_cov",b_acc_cov,0.0001);
     nh.param<double>("preprocess/blind", p_pre->blind, 0.01);
-    nh.param<int>("preprocess/lidar_type", p_pre->lidar_type, AVIA);
+    nh.param<int>("preprocess/lidar_type", lidar_type, AVIA);
     nh.param<int>("preprocess/scan_line", p_pre->N_SCANS, 16);
     nh.param<int>("preprocess/timestamp_unit", p_pre->time_unit, US);
     nh.param<int>("preprocess/scan_rate", p_pre->SCAN_RATE, 10);
     nh.param<int>("point_filter_num", p_pre->point_filter_num, 2);
     nh.param<bool>("feature_extract_enable", p_pre->feature_enabled, false);
+    string imu_gyr_unit_str;
+    nh.param<string>("common/imu_gyr_unit", imu_gyr_unit_str, "rad");
+    imu_gyr_is_deg = (imu_gyr_unit_str == "deg");
     nh.param<bool>("runtime_pos_log_enable", runtime_pos_log, 0);
     nh.param<bool>("mapping/extrinsic_est_en", extrinsic_est_en, true);
     nh.param<bool>("pcd_save/pcd_save_en", pcd_save_en, false);
     nh.param<int>("pcd_save/interval", pcd_save_interval, -1);
     nh.param<vector<double>>("mapping/extrinsic_T", extrinT, vector<double>());
     nh.param<vector<double>>("mapping/extrinsic_R", extrinR, vector<double>());
+
+    p_pre->lidar_type = lidar_type;
     cout<<"p_pre->lidar_type "<<p_pre->lidar_type<<endl;
     
     path.header.stamp    = ros::Time::now();
@@ -815,7 +901,7 @@ int main(int argc, char** argv)
     p_imu->set_acc_cov(V3D(acc_cov, acc_cov, acc_cov));
     p_imu->set_gyr_bias_cov(V3D(b_gyr_cov, b_gyr_cov, b_gyr_cov));
     p_imu->set_acc_bias_cov(V3D(b_acc_cov, b_acc_cov, b_acc_cov));
-
+    p_imu->lidar_type = lidar_type;
     double epsi[23] = {0.001};
     fill(epsi, epsi+23, 0.001);
     kf.init_dyn_share(get_f, df_dx, df_dw, h_share_model, NUM_MAX_ITERATIONS, epsi);
@@ -835,9 +921,18 @@ int main(int argc, char** argv)
         cout << "~~~~"<<ROOT_DIR<<" doesn't exist" << endl;
 
     /*** ROS subscribe initialization ***/
-    ros::Subscriber sub_pcl = p_pre->lidar_type == AVIA ? \
-        nh.subscribe(lid_topic, 200000, livox_pcl_cbk) : \
+#ifdef FAST_LIO_ENABLE_LIVOX
+    ros::Subscriber sub_pcl = p_pre->lidar_type == AVIA ?
+        nh.subscribe(lid_topic, 200000, livox_pcl_cbk) :
         nh.subscribe(lid_topic, 200000, standard_pcl_cbk);
+#else
+    if (p_pre->lidar_type == AVIA)
+    {
+        ROS_ERROR("AVIA/Livox support requires livox_ros_driver. Install it or use a Hesai/standard PointCloud2 launch file.");
+        return -1;
+    }
+    ros::Subscriber sub_pcl = nh.subscribe(lid_topic, 200000, standard_pcl_cbk);
+#endif
     ros::Subscriber sub_imu = nh.subscribe(imu_topic, 200000, imu_cbk);
     ros::Publisher pubLaserCloudFull = nh.advertise<sensor_msgs::PointCloud2>
             ("/cloud_registered", 100000);
@@ -851,6 +946,7 @@ int main(int argc, char** argv)
             ("/Odometry", 100000);
     ros::Publisher pubPath          = nh.advertise<nav_msgs::Path> 
             ("/path", 100000);
+    ros::ServiceServer map_save_srv = nh.advertiseService("map_save", map_save_callback);
 //------------------------------------------------------------------------------------------------------
     signal(SIGINT, SigHandle);
     ros::Rate rate(5000);
@@ -1014,13 +1110,12 @@ int main(int argc, char** argv)
     /**************** save map ****************/
     /* 1. make sure you have enough memories
     /* 2. pcd save will largely influence the real-time performences **/
-    if (pcl_wait_save->size() > 0 && pcd_save_en)
+    if (pcd_save_en)
     {
-        string file_name = string("scans.pcd");
-        string all_points_dir(string(string(ROOT_DIR) + "PCD/") + file_name);
-        pcl::PCDWriter pcd_writer;
-        cout << "current scan saved to /PCD/" << file_name<<endl;
-        pcd_writer.writeBinary(all_points_dir, *pcl_wait_save);
+        std::string saved_path;
+        if (save_to_pcd(saved_path)) {
+            cout << "[map_save] final map saved to " << saved_path << endl;
+        }
     }
 
     fout_out.close();

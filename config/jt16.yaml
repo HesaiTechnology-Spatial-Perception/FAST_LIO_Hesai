@@ -1,0 +1,38 @@
+# Copyright 2026 Hesai Technology. All rights reserved.
+# SPDX-License-Identifier: GPL-2.0
+# Configuration for Hesai JT16 LiDAR with FAST-LIO2 (ROS 1).
+common:
+    lid_topic:  "/lidar_points"
+    imu_topic:  "/lidar_imu"
+    time_sync_en: false
+    time_offset_lidar_to_imu: 0.0
+    imu_gyr_unit: "deg"          # "rad" or "deg"
+
+preprocess:
+    lidar_type: 5                # 5: Hesai JT16
+    scan_line: 16
+    timestamp_unit: 0            # 0-second, 1-millisecond, 2-microsecond, 3-nanosecond
+    blind: 1.0
+
+mapping:
+    acc_cov: 0.1
+    gyr_cov: 0.1
+    b_acc_cov: 0.0001
+    b_gyr_cov: 0.0001
+    fov_degree:    90
+    det_range:     200.0
+    extrinsic_est_en:  true
+    extrinsic_T: [0.0, 0.0, 0.0]
+    extrinsic_R: [ 1.0, 0.0, 0.0,
+                   0.0, 1.0, 0.0,
+                   0.0, 0.0, 1.0]
+
+publish:
+    path_en:  true
+    scan_publish_en:  true
+    dense_publish_en: true
+    scan_bodyframe_pub_en: true
+
+pcd_save:
+    pcd_save_en: false
+    interval: -1
