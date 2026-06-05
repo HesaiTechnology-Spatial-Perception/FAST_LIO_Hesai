@@ -13,7 +13,7 @@ This repository supports:
 
 FAST-LIO2 is a tightly-coupled LiDAR-inertial odometry algorithm. This repository adapts FAST-LIO2 for Hesai JT16 and JT128 LiDARs through standard point cloud and IMU topics.
 
-Example mapping result:
+Example mapping result(JT16):
 
 ![FAST_LIO_Hesai demo result](./doc/results/fast_lio2_jt_demo2.jpg)
 
