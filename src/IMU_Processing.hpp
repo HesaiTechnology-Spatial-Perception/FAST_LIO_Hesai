@@ -46,6 +46,7 @@ class ImuProcess
   void set_acc_cov(const V3D &scaler);
   void set_gyr_bias_cov(const V3D &b_g);
   void set_acc_bias_cov(const V3D &b_a);
+  void set_init_window(double delay_sec, double duration_sec);
   Eigen::Matrix<double, 12, 12> Q;
   void Process(const MeasureGroup &meas,  esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state, PointCloudXYZI::Ptr pcl_un_);
 
@@ -75,6 +76,8 @@ class ImuProcess
   V3D angvel_last;
   V3D acc_s_last;
   double start_timestamp_;
+  double init_delay_sec_;
+  double init_duration_sec_;
   double last_lidar_end_time_;
   int    init_iter_num = 1;
   bool   b_first_frame_ = true;
@@ -82,7 +85,8 @@ class ImuProcess
 };
 
 ImuProcess::ImuProcess()
-    : b_first_frame_(true), imu_need_init_(true), start_timestamp_(-1)
+    : b_first_frame_(true), imu_need_init_(true), start_timestamp_(-1),
+      init_delay_sec_(0.0), init_duration_sec_(0.0)
 {
   init_iter_num = 1;
   Q = process_noise_cov();
@@ -151,6 +155,12 @@ void ImuProcess::set_gyr_bias_cov(const V3D &b_g)
 void ImuProcess::set_acc_bias_cov(const V3D &b_a)
 {
   cov_bias_acc = b_a;
+}
+
+void ImuProcess::set_init_window(double delay_sec, double duration_sec)
+{
+  init_delay_sec_ = std::max(0.0, delay_sec);
+  init_duration_sec_ = std::max(0.0, duration_sec);
 }
 
 void ImuProcess::IMU_init(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state, int &N)
@@ -346,21 +356,57 @@ void ImuProcess::Process(const MeasureGroup &meas,  esekfom::esekf<state_ikfom, 
 
   if (imu_need_init_)
   {
-    /// The very first lidar frame
-    IMU_init(meas, kf_state, init_iter_num);
+    if (start_timestamp_ < 0.0)
+      start_timestamp_ = meas.lidar_beg_time;
+
+    const double init_window_start = start_timestamp_ + init_delay_sec_;
+    if (meas.lidar_end_time < init_window_start)
+    {
+      last_imu_ = meas.imu.back();
+      return;
+    }
+
+    MeasureGroup init_meas = meas;
+    init_meas.imu.clear();
+    const double init_window_end = init_window_start + init_duration_sec_;
+    for (const auto &imu : meas.imu)
+    {
+      const double stamp = rclcpp::Time(imu->header.stamp).seconds();
+      if (stamp >= init_window_start &&
+          (init_duration_sec_ <= 0.0 || stamp <= init_window_end))
+        init_meas.imu.push_back(imu);
+    }
+    if (init_meas.imu.empty())
+    {
+      last_imu_ = meas.imu.back();
+      return;
+    }
+
+    // IMU_init() calls Reset() on its first accepted frame. Preserve the
+    // LiDAR-time origin so the configured window does not restart there.
+    const double initialization_origin = start_timestamp_;
+    IMU_init(init_meas, kf_state, init_iter_num);
+    start_timestamp_ = initialization_origin;
 
     imu_need_init_ = true;
     
     last_imu_   = meas.imu.back();
 
     state_ikfom imu_state = kf_state.get_x();
-    if (init_iter_num > MAX_INI_COUNT)
+    const bool duration_complete = init_duration_sec_ <= 0.0
+        || meas.lidar_end_time >= init_window_start + init_duration_sec_;
+    if (init_iter_num > MAX_INI_COUNT && duration_complete)
     {
       cov_acc *= pow(G_m_s2 / mean_acc.norm(), 2);
       imu_need_init_ = false;
 
       cov_acc = cov_acc_scale;
       cov_gyr = cov_gyr_scale;
+      std::cout << "IMU initialization window " << init_delay_sec_ << "-"
+                << init_delay_sec_ + init_duration_sec_ << " s: "
+                << init_iter_num - 1 << " samples, mean gyro ["
+                << mean_gyr.x() << " " << mean_gyr.y() << " " << mean_gyr.z()
+                << "] rad/s (norm " << mean_gyr.norm() << ")" << std::endl;
       std::cout << "IMU Initial Done" << std::endl;
       if (mean_gyr.norm() > 0.5)
         std::cout << "[WARN] estimated gyro bias " << mean_gyr.norm()

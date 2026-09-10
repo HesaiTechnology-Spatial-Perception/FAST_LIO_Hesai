@@ -61,7 +61,7 @@ With exactly one PCAP in a JT16/JT32/JT128 directory, PCAP may be omitted.
 Defaults are printed before conversion. Use --dry-run to inspect them safely.
 
 Options:
-  --model MODEL              jt16, jt32, or jt128 (normally inferred)
+  --model MODEL              jt16, jt32, jt64p, or jt128 (normally inferred)
   --pcap PATH                Alternative to the positional PCAP path
   --correction PATH          Angle correction file (normally discovered)
   --firetime PATH            Firetime correction file (normally discovered)

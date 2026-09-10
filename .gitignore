@@ -15,3 +15,5 @@ AGENTS.md
 .codex/
 tools/__pycache__/check_config.cpython-310.pyc
 tools/__pycache__/check_input.cpython-310.pyc
+__pycache__/
+*.pyc

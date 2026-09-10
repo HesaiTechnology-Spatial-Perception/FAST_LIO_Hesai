@@ -1,7 +1,7 @@
 # FAST_LIO_Hesai Agent Playbooks
 
 Platform-neutral agent "skills" that teach an AI agent how to set up and run
-FAST-LIO2 on Hesai JT16 / JT32 / JT128 LiDARs end to end.
+FAST-LIO2 on Hesai JT16 / JT32 / JT128 / MT60 LiDARs end to end.
 
 These are **generic** Markdown playbooks — not tied to any single AI product.
 Any agent (Claude, GPT, or a custom LLM pipeline) can use them: load

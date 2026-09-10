@@ -4,7 +4,7 @@
 // This file is part of FAST_LIO_Hesai, a fork of FAST_LIO
 // (https://github.com/hku-mars/FAST_LIO) by the MARS Lab, HKU.
 // The upstream preprocess code has been substantially rewritten for
-// Hesai JT16 / JT32 / JT128 LiDARs.  Original upstream logic and structure
+// Hesai JT16 / JT32 / JT128 / MT60 LiDARs.  Original upstream logic and structure
 // are retained where applicable; original copyright notices are
 // preserved in the accompanying LICENSE file.
 //
@@ -12,7 +12,7 @@
 //   - Removed non-Hesai LiDAR handlers (Livox Avia/Horizon, Velodyne,
 //     Ouster, MID360, etc.)
 //   - Added hesai_point_type::Point struct (ring + timestamp fields)
-//   - Added JT16 / JT128 / JT32 lidar_type enum (ROS 2: 1/2/3)
+//   - Added JT16 / JT128 / JT32 / MT60 lidar_type enum (ROS 2: 1/2/3/4)
 //   - Adapted all ROS 1 headers to ROS 2 (rclcpp / sensor_msgs/msg)
 
 // #include <ros/ros.h>
@@ -31,7 +31,9 @@ enum LID_TYPE
 {
   JT16 = 1,
   JT128 = 2,
-  JT32 = 3
+  JT32 = 3,
+  MT60 = 4
+  , JT64P = 5
 };
 enum TIME_UNIT
 {

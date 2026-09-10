@@ -1,38 +1,47 @@
 # Copyright 2026 Hesai Technology. All rights reserved.
 # SPDX-License-Identifier: GPL-2.0
-# Configuration for Hesai JT128 LiDAR with FAST-LIO2 (ROS 2).
+# Configuration for Hesai MT60 LiDAR with FAST-LIO2 (ROS 2).
 /**:
     ros__parameters:
         feature_extract_enable: false
-        point_filter_num: 6
+        point_filter_num: 1
         max_iteration: 3
         filter_size_surf: 0.5
-        filter_size_map: 0.3
+        filter_size_map: 0.5
         cube_side_length: 1000.0
         runtime_pos_log_enable: false
 
         common:
             lid_topic:  "/lidar_points"
             imu_topic:  "/lidar_imu"
+            # MT_V7 carries LiDAR and IMU samples in the same UDP packet. Keep software
+            # synchronization disabled unless an external IMU with a different clock is used.
             time_sync_en: false
-            time_offset_lidar_to_imu: 0.0
-            # Driver releases differ: v2.0.12 publishes raw deg/s, while v2.0.10/2.0.11 publish rad/s.
-            imu_gyr_unit: "auto"         # prefer explicit driver unit: "rad" or "deg"; auto is heuristic
+            time_offset_lidar_to_imu: 6.26031
+            # Compatible with drivers publishing g + deg/s or m/s^2 + rad/s.
+            # Set "deg" or "rad" only when the driver output unit is known and fixed.
+            imu_gyr_unit: "auto"
 
         preprocess:
-            lidar_type: 2                # 2: Hesai JT128
-            scan_line: 128
+            lidar_type: 4                # 4: Hesai MT60 (ROS 2)
+            scan_line: 2                 # MT_V7 (UDP 6.7) publishes ring 0 and 1; "60" is the vertical FOV span
             timestamp_unit: 0            # 0-second, 1-millisecond, 2-microsecond, 3-nanosecond
             blind: 0.5
 
         mapping:
+            # IMU process-noise parameters; tune from the actual IMU noise, not the LiDAR model.
             acc_cov: 0.1
             gyr_cov: 0.1
             b_acc_cov: 0.0001
             b_gyr_cov: 0.0001
-            fov_degree: 360.0
-            det_range: 50.0
+            # This recording contains a gyroscope startup transient during the first
+            # ~2.2 s. Initialize from the following stationary 0.2 s interval instead.
+            imu_init_delay: 2.2
+            imu_init_duration: 0.2
+            fov_degree: 320.0             # Horizontal FOV: 10° to 330°; vertical spec: -20° to 40°
+            det_range: 75.0               # TOF/effective range: 75 m
             extrinsic_est_en: true
+            # LiDAR-to-IMU extrinsics. Identity is only valid when both coordinate frames coincide.
             extrinsic_T: [0.0, 0.0, 0.0]
             extrinsic_R: [1.0, 0.0, 0.0,
                           0.0, 1.0, 0.0,

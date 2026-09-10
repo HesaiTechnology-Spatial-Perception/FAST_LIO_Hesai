@@ -1,11 +1,11 @@
 ---
 name: run-fastlio2-hesai-ros2
 description: >-
-  Set up and run FAST-LIO2 on Hesai JT16 / JT32 / JT128 LiDARs on ROS 2 Humble
+  Set up and run FAST-LIO2 on Hesai JT16 / JT32 / JT128 / MT60 LiDARs on ROS 2 Humble
   (FAST_LIO_Hesai ROS2 branch). Detects and configures the local ROS 2
   environment, then runs FAST-LIO2 from a PCAP capture, an existing rosbag, or
   a live sensor. Use when building, configuring, validating, or running
-  FAST-LIO2 mapping with a Hesai JT LiDAR on ROS 2, converting a PCAP to a bag,
+  FAST-LIO2 mapping with a Hesai JT or MT60 LiDAR on ROS 2, converting a PCAP to a bag,
   or bringing up the lidar live.
 ---
 
@@ -20,6 +20,7 @@ Package name: `fast_lio`. Run commands from the ROS 2 workspace root.
 ./tools/run_fastlio.sh jt128 live
 ./tools/run_fastlio.sh jt32 bag /data/jt32_bag
 ./tools/run_fastlio.sh jt16 bag /data/jt16_bag --play-rate 2.0
+./tools/run_fastlio.sh mt60 bag /data/mt60_bag
 ./tools/run_fastlio.sh jt128 pcap /data/JT128/input.pcap
 ```
 
@@ -41,9 +42,9 @@ replay speed. Use the detailed workflow below for diagnosis.
 
 ## Step 0: Auto-detect LiDAR model
 
-**Do not ask the user for the model — detect it automatically from the data.**
-The model is determined by the point cloud `ring` field: max ring ≤ 15 → JT16,
-max ring ≤ 31 → JT32, otherwise → JT128.
+Detect JT models from the point cloud `ring` field when possible. MT60 MT_V7
+publishes only rings 0 and 1, which is indistinguishable from a sparse JT frame,
+so pass `--model mt60` explicitly for MT60 data.
 
 With the sensor publishing or a rosbag2 playing (see Step 3), run:
 
@@ -52,13 +53,14 @@ ros2 run fast_lio check_input.py        # --model defaults to "auto"
 ```
 
 It prints e.g. `auto-detected model: JT16 (ring max=15)`. Record the detected
-model as `MODEL` (`jt16`, `jt32`, or `jt128`) and substitute it in every command below.
+model as `MODEL` (`jt16`, `jt32`, `jt128`, or `mt60`) and substitute it in every command below.
 
 | Model | Lines | Config | Launch file | `lidar_type` (ROS 2) |
 | --- | --- | --- | --- | --- |
 | JT16 | 16 | `config/jt16.yaml` | `mapping_jt16.launch.py` | 1 |
 | JT32 | 32 | `config/jt32.yaml` | `mapping_jt32.launch.py` | 3 |
 | JT128 | 128 | `config/jt128.yaml` | `mapping_jt128.launch.py` | 2 |
+| MT60 MT_V7 | 2 | `config/MT60.yaml` | `mapping_mt60.launch.py` | 4 |
 
 > JT32 support is pre-adapted in FAST-LIO2, but the current public Hesai ROS
 > Driver does not parse JT32 UDP 1.12. JT32 currently requires the validated
@@ -112,7 +114,8 @@ ros2 pkg prefix fast_lio
 # Set once only when the driver workspace cannot be discovered automatically.
 export HESAI_DRIVER_WS=~/hesai_ros2_ws
 
-# The JT16/JT32/JT128 directory name supplies the model.
+# The JT16/JT32/JT128 directory name supplies the model; MT60 PCAP conversion
+# is not registered.
 bash tools/pcap_to_rosbag/pcap_to_rosbag_ros2.sh /path/to/JT128/input.pcap
 ```
 
@@ -148,7 +151,9 @@ ros2 launch fast_lio mapping_$MODEL.launch.py
 
 ```bash
 # Config (static)
-python3 tools/check_config.py --config config/$MODEL.yaml --model $MODEL --ros 2
+CONFIG=config/$MODEL.yaml
+[[ "$MODEL" != "mt60" ]] || CONFIG=config/MT60.yaml
+python3 tools/check_config.py --config "$CONFIG" --model "$MODEL" --ros 2
 
 # Input (runtime) — while bag is playing or driver is publishing
 ros2 run fast_lio check_input.py --model $MODEL --timestamp-unit 0
@@ -156,11 +161,12 @@ ros2 run fast_lio check_input.py --model $MODEL --timestamp-unit 0
 
 Resolve any FAIL before running.
 
-Keep `common.imu_gyr_unit: "auto"` for JT16, JT32, and JT128. Hesai ROS
-Driver 2.0.10/2.0.11 publishes SI units (`rad/s`, `m/s²`), while 2.0.12
-publishes the SDK-scale values (`deg/s`, `g`). FAST-LIO2 detects the pair from
-the startup acceleration norm and converts angular velocity when required.
-Use `"deg"` or `"rad"` only as a manual override.
+Keep `common.imu_gyr_unit: "auto"` for JT16, JT32, JT128, and MT60. FAST-LIO2
+accepts either SI values (`rad/s`, `m/s²`) or SDK-scale values (`deg/s`, `g`),
+detects the pair from startup acceleration, and converts angular velocity when
+required. Use `"deg"` or `"rad"` only when the driver output is known and fixed.
+For MT60, reject zero-stamped or all-zero IMU samples and load the matching
+angle correction file in the Hesai driver before mapping.
 
 ## Step 5: View results in RViz
 

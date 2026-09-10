@@ -92,6 +92,7 @@ pcap_find_calibration() {
         case "$MODEL" in
             jt16)  pattern='*JT16*' ;;
             jt32)  pattern='*JT32*' ;;
+            jt64p) pattern='*JT64P*' ;;
             jt128) pattern='*JT128*' ;;
         esac
     else
@@ -100,6 +101,7 @@ pcap_find_calibration() {
         case "$MODEL" in
             jt16)  pattern='*JT16*' ;;
             jt32)  pattern='*JT32*' ;;
+            jt64p) pattern='*JT64P*' ;;
             jt128) pattern='*JT128*' ;;
         esac
     fi
@@ -148,12 +150,13 @@ pcap_resolve_defaults() {
         case "$lower_path" in
             *jt128*) MODEL="jt128" ;;
             *jt32*)  MODEL="jt32" ;;
+            *jt64p*) MODEL="jt64p" ;;
             *jt16*)  MODEL="jt16" ;;
-            *) die "Cannot infer LiDAR model from '$PCAP'; pass --model jt16|jt32|jt128" ;;
+            *) die "Cannot infer LiDAR model from '$PCAP'; pass --model jt16|jt32|jt64p|jt128" ;;
         esac
     fi
-    [[ "$MODEL" == "jt16" || "$MODEL" == "jt32" || "$MODEL" == "jt128" ]] || \
-        die "--model must be jt16, jt32, or jt128"
+    [[ "$MODEL" == "jt16" || "$MODEL" == "jt32" || "$MODEL" == "jt64p" || "$MODEL" == "jt128" ]] || \
+        die "--model must be jt16, jt32, jt64p, or jt128"
 
     if [[ -z "$DRIVER_WS" && -n "${HESAI_DRIVER_WS:-}" ]]; then
         DRIVER_WS="$HESAI_DRIVER_WS"

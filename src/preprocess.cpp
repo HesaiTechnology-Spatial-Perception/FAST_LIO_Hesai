@@ -9,8 +9,8 @@
 // accompanying LICENSE file.
 //
 // Modified by Hesai Technology, 2026-06:
-//   - Retained only Hesai JT handler; removed all non-Hesai LiDAR paths
-//   - Added hesai_handler() for JT16 / JT32 / JT128 PointCloud2 parsing
+//   - Retained only Hesai mechanical LiDAR handler; removed all non-Hesai LiDAR paths
+//   - Added hesai_handler() for JT16 / JT32 / JT128 / MT60 PointCloud2 parsing
 //   - Added per-point ring + timestamp extraction and frame accumulation
 
 #include "preprocess.h"
@@ -88,6 +88,13 @@ void Preprocess::process(const sensor_msgs::msg::PointCloud2::UniquePtr &msg, Po
     case JT32:
       hesai_handler(msg);
       break;
+  case MT60:
+    hesai_handler(msg);
+    break;
+
+  case JT64P:
+    hesai_handler(msg);
+    break;
 
     default:
       printf("Error LiDAR Type");

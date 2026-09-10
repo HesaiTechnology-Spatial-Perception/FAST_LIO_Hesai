@@ -10,7 +10,7 @@
 // All rights reserved.
 //
 // Modified by Hesai Technology, 2026-06.
-// Modifications: adapted for Hesai JT16 / JT32 / JT128 LiDARs; ported to ROS 2
+// Modifications: adapted for Hesai JT16 / JT32 / JT128 / MT60 LiDARs; ported to ROS 2
 // (rclcpp); added /map_save service and pcd_save support; added
 // imu_gyr_unit (auto/deg/rad) parameter; re-enabled exit-time PCD save
 // (the buffer accumulation block was commented out upstream, so
@@ -102,6 +102,7 @@ string map_file_path, lid_topic, imu_topic;
 double res_mean_last = 0.05, total_residual = 0.0;
 double last_timestamp_lidar = 0, last_timestamp_imu = -1.0;
 double gyr_cov = 0.1, acc_cov = 0.1, b_gyr_cov = 0.0001, b_acc_cov = 0.0001;
+double imu_init_delay = 0.0, imu_init_duration = 0.0;
 double filter_size_corner_min = 0, filter_size_surf_min = 0, filter_size_map_min = 0, fov_deg = 0;
 double cube_len = 0, HALF_FOV_COS = 0, FOV_DEG = 0, total_distance = 0, lidar_end_time = 0, first_lidar_time = 0.0;
 int    effct_feat_num = 0, time_log_counter = 0, scan_count = 0, publish_count = 0;
@@ -114,6 +115,7 @@ bool    imu_gyr_is_deg = false;
 bool    imu_gyr_unit_resolved = false;
 string  imu_gyr_unit_mode = "auto";
 vector<double> imu_acc_norm_samples;
+bool imu_auto_detect_warned = false;
 
 vector<vector<int>>  pointSearchInd_surf; 
 vector<BoxPointType> cub_needrm;
@@ -346,25 +348,59 @@ bool resolve_imu_gyr_unit(const sensor_msgs::msg::Imu &msg)
     if (!std::isfinite(acc_norm) || acc_norm < 0.1)
         return false;
 
+    // Use a short startup window instead of deciding from the first IMU sample.
+    // The previous one-sample/low-threshold rule could classify dynamic motion
+    // as a unit convention and then make FAST-LIO diverge silently.
     imu_acc_norm_samples.push_back(acc_norm);
+    constexpr size_t kMinUnitSamples = 20;
+    constexpr size_t kMaxUnitSamples = 200;
+    if (imu_acc_norm_samples.size() < kMinUnitSamples)
+        return false;
+    if (imu_acc_norm_samples.size() > kMaxUnitSamples)
+        imu_acc_norm_samples.erase(imu_acc_norm_samples.begin(),
+                                   imu_acc_norm_samples.begin() +
+                                   (imu_acc_norm_samples.size() - kMaxUnitSamples));
     vector<double> samples = imu_acc_norm_samples;
     std::sort(samples.begin(), samples.end());
     const double median_acc_norm = samples[samples.size() / 2];
-    if (median_acc_norm >= 4.0 && median_acc_norm <= 6.0)
+    const bool looks_like_g = std::abs(median_acc_norm - 9.80665) < 3.0;
+    const bool looks_like_g_unit = std::abs(median_acc_norm - 1.0) < 0.35;
+    double mean_acc_norm = 0.0;
+    for (double sample : samples) mean_acc_norm += sample;
+    mean_acc_norm /= static_cast<double>(samples.size());
+    double variance = 0.0;
+    for (double sample : samples)
+        variance += (sample - mean_acc_norm) * (sample - mean_acc_norm);
+    const double acc_norm_std = std::sqrt(variance / static_cast<double>(samples.size()));
+    const double max_allowed_std = looks_like_g_unit ? 0.12 : 0.5;
+    if (!looks_like_g && !looks_like_g_unit)
     {
         RCLCPP_WARN(rclcpp::get_logger("laserMapping"),
-            "cannot auto-detect IMU units from median acceleration norm %.3f; "
-            "keep the sensor stationary or set common.imu_gyr_unit to 'deg' or 'rad'",
-            median_acc_norm);
-        imu_acc_norm_samples.clear();
+            "cannot auto-detect IMU units from %zu samples (median acceleration norm %.3f); "
+            "set common.imu_gyr_unit to 'deg' or 'rad'",
+            imu_acc_norm_samples.size(), median_acc_norm);
         return false;
     }
-    imu_gyr_is_deg = median_acc_norm < 4.0;
+    if (acc_norm_std > max_allowed_std)
+    {
+        if (!imu_auto_detect_warned)
+        {
+            RCLCPP_WARN(rclcpp::get_logger("laserMapping"),
+                "IMU auto-detection rejected a moving/noisy startup window "
+                "(acceleration norm %.3f +/- %.3f); keep the sensor stationary "
+                "or set common.imu_gyr_unit explicitly",
+                median_acc_norm, acc_norm_std);
+            imu_auto_detect_warned = true;
+        }
+        return false;
+    }
+    imu_gyr_is_deg = looks_like_g_unit;
     imu_gyr_unit_resolved = true;
-    RCLCPP_INFO(rclcpp::get_logger("laserMapping"),
-        "auto-detected IMU units from median acceleration norm %.3f: "
+    RCLCPP_WARN(rclcpp::get_logger("laserMapping"),
+        "auto-detected IMU gyro units heuristically from %zu IMU samples "
+        "(median acceleration norm %.3f): "
         "driver gyro output is %s; FAST-LIO2 will %s",
-        median_acc_norm, imu_gyr_is_deg ? "deg/s" : "rad/s",
+        imu_acc_norm_samples.size(), median_acc_norm, imu_gyr_is_deg ? "deg/s" : "rad/s",
         imu_gyr_is_deg ? "convert it to rad/s" : "use it directly");
     return true;
 }
@@ -385,6 +421,7 @@ void imu_cbk(const sensor_msgs::msg::Imu::UniquePtr msg_in)
 
     const bool was_resolved = imu_gyr_unit_resolved;
     resolve_imu_gyr_unit(*msg);
+
 
     mtx_buffer.lock();
     // Auto mode buffers IMU from the first message, but sync_packages() waits
@@ -911,6 +948,8 @@ public:
         this->declare_parameter<double>("mapping.acc_cov", 0.1);
         this->declare_parameter<double>("mapping.b_gyr_cov", 0.0001);
         this->declare_parameter<double>("mapping.b_acc_cov", 0.0001);
+        this->declare_parameter<double>("mapping.imu_init_delay", 0.0);
+        this->declare_parameter<double>("mapping.imu_init_duration", 0.0);
         this->declare_parameter<double>("preprocess.blind", 0.01);
         this->declare_parameter<int>("preprocess.lidar_type", JT16);
         this->declare_parameter<string>("common.imu_gyr_unit", "auto");
@@ -950,6 +989,8 @@ public:
         this->get_parameter_or<double>("mapping.acc_cov",acc_cov,0.1);
         this->get_parameter_or<double>("mapping.b_gyr_cov",b_gyr_cov,0.0001);
         this->get_parameter_or<double>("mapping.b_acc_cov",b_acc_cov,0.0001);
+        this->get_parameter_or<double>("mapping.imu_init_delay",imu_init_delay,0.0);
+        this->get_parameter_or<double>("mapping.imu_init_duration",imu_init_duration,0.0);
         this->get_parameter_or<double>("preprocess.blind", p_pre->blind, 0.01);
         this->get_parameter_or<int>("preprocess.lidar_type", p_pre->lidar_type, JT16);
 
@@ -1040,6 +1081,7 @@ public:
         p_imu->set_acc_cov(V3D(acc_cov, acc_cov, acc_cov));
         p_imu->set_gyr_bias_cov(V3D(b_gyr_cov, b_gyr_cov, b_gyr_cov));
         p_imu->set_acc_bias_cov(V3D(b_acc_cov, b_acc_cov, b_acc_cov));
+        p_imu->set_init_window(imu_init_delay, imu_init_duration);
 
         fill(epsi, epsi+23, 0.001);
         kf.init_dyn_share(get_f, df_dx, df_dw, h_share_model, NUM_MAX_ITERATIONS, epsi);
@@ -1137,7 +1179,9 @@ private:
             /*** initialize the map kdtree ***/
             if(ikdtree.Root_Node == nullptr)
             {
-                RCLCPP_INFO(this->get_logger(), "Initialize the map kdtree");
+                RCLCPP_INFO(this->get_logger(),
+                            "Initialize map kdtree: undistorted=%zu, downsampled=%d",
+                            feats_undistort->size(), feats_down_size);
                 if(feats_down_size > 5)
                 {
                     ikdtree.set_downsample_param(filter_size_map_min);
