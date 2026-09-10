@@ -16,6 +16,9 @@ and playback steps:
 # Existing rosbag: start FAST-LIO2 and play the bag
 ./tools/run_fastlio.sh jt32 bag /data/jt32.bag
 
+# MT60 rosbag: start the MT60 configuration and play the bag
+./tools/run_fastlio.sh mt60 bag /data/mt60.bag
+
 # Optional: replay a bag or converted PCAP at 2x speed
 ./tools/run_fastlio.sh jt16 bag /data/jt16.bag --play-rate 2.0
 
@@ -26,11 +29,13 @@ and playback steps:
 ./tools/run_fastlio.sh jt128 live --save-map
 ```
 
-The same entry supports JT16, JT32, and JT128 on both branches. ROS 1/ROS 2 is
+The same entry supports JT16, JT32, JT128, and MT60 on both branches for live
+and existing-bag input. ROS 1/ROS 2 is
 detected from the branch. Use `--dry-run` to inspect the resolved workspaces and
 actions, use `--play-rate RATE` for bag/PCAP playback, or use `--fastlio-ws` /
 `--driver-ws` when a workspace is in a custom
 location. JT32 live and PCAP modes still require a driver with UDP 1.12 support.
+MT60 PCAP conversion is not registered; use a live sensor or an existing bag.
 For bag/PCAP input, the script reads the first valid IMU sample before launch
 and explicitly selects `deg` or `rad`, avoiding startup-order sensitivity.
 PCD buffering is off by default for every model and is enabled only when
@@ -53,7 +58,7 @@ starting FAST-LIO2.
 | 4 | `timestamp` is per-point and monotonically increasing | Motion undistortion broken |
 | 4b | `timestamp_unit` inferred from data (and compared to config if given) | Wrong `timestamp_unit` → undistortion wrong |
 | 4c | Frame interval stability / dropped frame detection | Frame loss degrades mapping |
-| 5 | `ring` range matches model (JT16: 0–15, JT32: 0–31, JT128: 0–127) | Wrong `scan_line` config |
+| 5 | `ring` range matches model (JT16: 0–15, JT32: 0–31, JT128: 0–127, MT60 MT_V7: 0–1) | Wrong `scan_line` config |
 | 6 | IMU frequency ≥ 100 Hz | IMU pipeline issue |
 | 7 | Driver IMU units from acceleration norm (raw vs SI) | Wrong `imu_gyr_unit` config |
 | 8 | `frame_id` of both sensors | TF / coordinate frame risk |
@@ -79,7 +84,7 @@ python3 tools/check_input.py --model jt128 --timestamp-unit 0
 | ------ | ------- | ----------- |
 | `--lidar_topic` | `/lidar_points` | Point cloud topic |
 | `--imu_topic` | `/lidar_imu` | IMU topic |
-| `--model` | `auto` | `jt16`, `jt32`, `jt128`, or auto-detect |
+| `--model` | `auto` | `jt16`, `jt32`, `jt128`, `mt60`, or auto-detect |
 | `--timeout` | `8.0` | Seconds to wait for messages |
 | `--timestamp-unit` | (none) | Your `preprocess.timestamp_unit` (0–3); enables a mismatch check |
 
@@ -94,7 +99,7 @@ it on a config file directly to catch the most common misconfigurations.
 
 | Item | Failure means |
 |------|---------------|
-| `preprocess.lidar_type` matches model + ROS version | Wrong LiDAR enum (ROS 1: 5/7/6, ROS 2: 1/3/2 for JT16/JT32/JT128) |
+| `preprocess.lidar_type` matches model + ROS version | Wrong LiDAR enum (ROS 1: 5/7/6/8, ROS 2: 1/3/2/4 for JT16/JT32/JT128/MT60) |
 | `preprocess.scan_line` matches model | Wrong line count |
 | `preprocess.timestamp_unit` is a valid enum (0–3) | Invalid unit |
 | `common.imu_gyr_unit` is `auto`, `deg`, or `rad` | Invalid unit |
@@ -115,7 +120,7 @@ python3 tools/check_config.py --config config/jt16.yaml  --model jt16  --ros 1
 | Option | Required | Description |
 | ------ | -------- | ----------- |
 | `--config` | ✓ | Path to the yaml config |
-| `--model` | ✓ | `jt16`, `jt32`, or `jt128` |
+| `--model` | ✓ | `jt16`, `jt32`, `jt128`, or `mt60` |
 | `--ros` | ✓ | `1` or `2` (lidar_type enum differs) |
 
 ---

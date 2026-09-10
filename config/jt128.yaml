@@ -7,7 +7,7 @@ common:
     time_sync_en: false
     time_offset_lidar_to_imu: 0.0
     # Driver releases differ: v2.0.12 publishes raw deg/s, while v2.0.10/2.0.11 publish rad/s.
-    imu_gyr_unit: "auto"         # auto-detect from acceleration; manual: "rad" or "deg"
+    imu_gyr_unit: "auto"         # prefer explicit driver unit: "rad" or "deg"; auto is heuristic
 
 preprocess:
     lidar_type: 6                # 6: Hesai JT128

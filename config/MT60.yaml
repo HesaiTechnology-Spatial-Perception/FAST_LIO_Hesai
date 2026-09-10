@@ -1,0 +1,52 @@
+# Copyright 2026 Hesai Technology. All rights reserved.
+# SPDX-License-Identifier: GPL-2.0
+# Configuration for Hesai MT60 LiDAR with FAST-LIO2 (ROS 1).
+common:
+    lid_topic:  "/lidar_points"
+    imu_topic:  "/lidar_imu"
+    # MT_V7 carries LiDAR and IMU samples in the same UDP packet. Keep software
+    # synchronization disabled unless an external IMU with a different clock is used.
+    time_sync_en: false
+    time_offset_lidar_to_imu: 6.26031
+    # Compatible with drivers publishing g + deg/s or m/s^2 + rad/s.
+    # Set "deg" or "rad" only when the driver output unit is known and fixed.
+    imu_gyr_unit: "auto"
+
+preprocess:
+    lidar_type: 8                # 8: Hesai MT60 (ROS 1)
+    scan_line: 2                 # MT_V7 (UDP 6.7) publishes ring 0 and 1; "60" is the vertical FOV span
+    timestamp_unit: 0            # 0-second, 1-millisecond, 2-microsecond, 3-nanosecond
+    blind: 0.5
+
+mapping:
+    # IMU process-noise parameters; tune from the actual IMU noise, not the LiDAR model.
+    acc_cov: 0.1
+    gyr_cov: 0.1
+    b_acc_cov: 0.0001
+    b_gyr_cov: 0.0001
+    # This recording contains a gyroscope startup transient during the first
+    # ~2.2 s. Initialize from the following stationary 0.2 s interval instead.
+    imu_init_delay: 2.2
+    imu_init_duration: 0.2
+    fov_degree:    320.0          # Horizontal FOV: 10° to 330°; vertical spec: -20° to 40°
+    det_range:     75.0           # TOF/effective range: 75 m
+    extrinsic_est_en:  true
+    # LiDAR-to-IMU extrinsics. Identity is only valid when both coordinate frames coincide.
+    extrinsic_T: [0.0, 0.0, 0.0]
+    extrinsic_R: [ 1.0, 0.0, 0.0,
+                   0.0, 1.0, 0.0,
+                   0.0, 0.0, 1.0]
+
+publish:
+    path_en:  true
+    scan_publish_en:  true
+    dense_publish_en: true
+    scan_bodyframe_pub_en: true
+
+pcd_save:
+    pcd_save_en: false
+    interval: -1
+    leaf_size: 0.0           # >0: voxel-downsample the saved map (m); bounds memory on long runs
+
+trajectory_save:
+    tum_en: false            # true: export trajectory to Log/traj_tum.txt (TUM format)

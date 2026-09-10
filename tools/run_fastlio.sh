@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-command customer entry point for Hesai JT FAST-LIO2.
+# One-command customer entry point for Hesai LiDAR FAST-LIO2.
 
 set -euo pipefail
 
@@ -11,7 +11,7 @@ usage() {
 Usage: run_fastlio.sh MODEL MODE [INPUT] [options]
 
 MODEL:
-  jt16 | jt32 | jt128
+  jt16 | jt32 | jt64p | jt128 | mt60
 
 MODE:
   live          Run the Hesai driver and FAST-LIO2
@@ -21,6 +21,7 @@ MODE:
 Examples:
   ./tools/run_fastlio.sh jt128 live
   ./tools/run_fastlio.sh jt32 bag /data/jt32.bag
+  ./tools/run_fastlio.sh mt60 bag /data/mt60.bag
   ./tools/run_fastlio.sh jt128 pcap /data/JT128/input.pcap
 
 Options:
@@ -45,8 +46,8 @@ EOF
 
 MODEL="$1"
 shift
-[[ "$MODEL" == "jt16" || "$MODEL" == "jt32" || "$MODEL" == "jt128" ]] || \
-    die "MODEL must be jt16, jt32, or jt128"
+[[ "$MODEL" == "jt16" || "$MODEL" == "jt32" || "$MODEL" == "jt64p" || "$MODEL" == "jt128" || "$MODEL" == "mt60" ]] || \
+    die "MODEL must be jt16, jt32, jt64p, jt128, or mt60"
 
 [[ $# -gt 0 ]] || die "MODE is required: live, bag, or pcap"
 MODE="$1"
@@ -99,6 +100,8 @@ done
 
 [[ "$MODE" == "live" || -n "$INPUT" ]] || die "$MODE mode requires an input path"
 [[ "$MODE" == "live" || -e "$INPUT" ]] || die "Input not found: $INPUT"
+[[ "$MODEL" != "mt60" || "$MODE" != "pcap" ]] || \
+    die "MT60 PCAP conversion is not registered; use live mode or an existing rosbag"
 [[ "$MODE" == "pcap" || -z "$OUTPUT" ]] || die "--output is only valid in pcap mode"
 [[ "$PLAY_RATE" =~ ^[0-9]+([.][0-9]+)?$ ]] || die "--play-rate must be a positive number"
 awk -v rate="$PLAY_RATE" 'BEGIN { exit !(rate > 0) }' || die "--play-rate must be greater than zero"
@@ -304,9 +307,16 @@ prepare_map_config() {
     if [[ "$SAVE_MAP" != true && -z "$IMU_UNIT_OVERRIDE" ]]; then
         return 0
     fi
-    local source_config="$REPO_ROOT/config/${MODEL}.yaml"
+    local source_config
+    if [[ "$MODEL" == "mt60" ]]; then
+        source_config="$REPO_ROOT/config/MT60.yaml"
+    else
+        source_config="$REPO_ROOT/config/${MODEL}.yaml"
+    fi
     if [[ ! -f "$source_config" ]]; then
-        source_config=$(find "$FASTLIO_WS" -type f -path "*/fast_lio/config/${MODEL}.yaml" -print -quit 2>/dev/null)
+        local config_name="${MODEL}.yaml"
+        [[ "$MODEL" != "mt60" ]] || config_name="MT60.yaml"
+        source_config=$(find "$FASTLIO_WS" -type f -path "*/fast_lio/config/${config_name}" -print -quit 2>/dev/null)
     fi
     [[ -f "$source_config" ]] || die "Cannot find config/${MODEL}.yaml for map saving"
     mkdir -p "$(dirname "$MAP_PATH")"

@@ -111,3 +111,6 @@ install(FILES
   tools/pcap_to_rosbag/common.sh
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
+
+install(DIRECTORY config launch rviz
+  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION})

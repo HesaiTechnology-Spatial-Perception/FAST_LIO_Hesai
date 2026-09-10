@@ -11,6 +11,11 @@ jobs:
     runs-on: ubuntu-latest
     container: ros:noetic-ros-base-focal
     steps:
+      - name: Install Git
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git
+
       - uses: actions/checkout@v4
         with:
           submodules: recursive

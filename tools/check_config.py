@@ -6,7 +6,7 @@
 # (https://github.com/hku-mars/FAST_LIO) by the MARS Lab, HKU.
 # This script is an original contribution by Hesai Technology.
 """
-check_config.py  —  Statically validate a FAST-LIO2 (Hesai JT) yaml config
+check_config.py  —  Statically validate a FAST-LIO2 (Hesai JT/MT60) yaml config
 
 Does NOT require ROS to be running. Parses the yaml and checks parameter
 consistency against the declared LiDAR model and ROS version, catching the
@@ -17,13 +17,14 @@ Checks:
   - preprocess.scan_line matches model
   - preprocess.timestamp_unit is a valid enum (0-3)
   - common.imu_gyr_unit is "auto", "deg", or "rad"
+  - mapping.imu_init_delay and imu_init_duration are non-negative
   - preprocess.blind is positive and below mapping.det_range
   - mapping.extrinsic_R is a valid rotation matrix (orthonormal, det ~ 1)
   - mapping.extrinsic_T has 3 elements
   - pcd_save.pcd_save_en consistency with map_file_path writability
 
 Usage:
-  python3 tools/check_config.py --config config/jt128.yaml --model jt128 --ros 2
+  python3 tools/check_config.py --config config/MT60.yaml --model mt60 --ros 1
   python3 tools/check_config.py --config config/jt16.yaml  --model jt16  --ros 1
 """
 
@@ -46,6 +47,8 @@ MODEL_SPECS = {
     "jt16":  {"scan_line": 16,  "lidar_type": {1: 5, 2: 1}},
     "jt32":  {"scan_line": 32,  "lidar_type": {1: 7, 2: 3}},
     "jt128": {"scan_line": 128, "lidar_type": {1: 6, 2: 2}},
+    "mt60":  {"scan_line": 2,   "lidar_type": {1: 8, 2: 4}},
+    "jt64p": {"scan_line": 64,  "lidar_type": {1: 9, 2: 5}},
 }
 
 
@@ -93,6 +96,7 @@ class ConfigChecker:
         self._check_scan_line(cfg)
         self._check_timestamp_unit(cfg)
         self._check_gyr_unit(cfg)
+        self._check_imu_init_window(cfg)
         self._check_blind(cfg)
         self._check_extrinsic(cfg)
         self._check_pcd_save(cfg)
@@ -140,6 +144,16 @@ class ConfigChecker:
                        f"(must be 'auto', 'deg', or 'rad')")
         else:
             self._pass(f"common.imu_gyr_unit='{val}' valid")
+
+    def _check_imu_init_window(self, cfg):
+        delay = self._get(cfg, "mapping.imu_init_delay", 0.0)
+        duration = self._get(cfg, "mapping.imu_init_duration", 0.0)
+        if not isinstance(delay, (int, float)) or delay < 0:
+            self._fail(f"mapping.imu_init_delay={delay} must be non-negative")
+        elif not isinstance(duration, (int, float)) or duration < 0:
+            self._fail(f"mapping.imu_init_duration={duration} must be non-negative")
+        else:
+            self._pass(f"IMU initialization window delay={delay} s, duration={duration} s valid")
 
     def _check_blind(self, cfg):
         blind = self._get(cfg, "preprocess.blind")
@@ -217,10 +231,10 @@ class ConfigChecker:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Statically validate a FAST-LIO2 (Hesai JT) yaml config")
+        description="Statically validate a FAST-LIO2 (Hesai JT/MT60) yaml config")
     parser.add_argument("--config", required=True, help="Path to the yaml config")
     parser.add_argument("--model",  required=True, choices=list(MODEL_SPECS.keys()),
-                        help="LiDAR model: jt16, jt32, or jt128")
+                        help="LiDAR model: jt16, jt32, jt64p, jt128, or mt60")
     parser.add_argument("--ros",    type=int, required=True, choices=[1, 2],
                         help="ROS version: 1 or 2 (lidar_type enum differs)")
     args = parser.parse_args()

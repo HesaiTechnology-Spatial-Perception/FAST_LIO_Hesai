@@ -5,7 +5,7 @@
 // (https://github.com/hku-mars/FAST_LIO) by the MARS Lab, HKU.
 // Modified by Hesai Technology, 2026-06:
 //   - Removed non-Hesai LiDAR handlers; added hesai_point_type::Point
-//   - Added JT16 / JT128 / JT32 lidar_type enum (ROS 1: 5/6/7)
+//   - Added JT16 / JT128 / JT32 / MT60 lidar_type enum (ROS 1: 5/6/7/8)
 #ifndef PREPROCESS_H
 #define PREPROCESS_H
 
@@ -24,7 +24,7 @@ using namespace std;
 typedef pcl::PointXYZINormal PointType;
 typedef pcl::PointCloud<PointType> PointCloudXYZI;
 
-enum LID_TYPE{AVIA = 1, VELO16, OUST64, MARSIM, JT16, JT128, JT32}; //{1, 2, 3, 4, 5, 6, 7}
+enum LID_TYPE{AVIA = 1, VELO16, OUST64, MARSIM, JT16, JT128, JT32, MT60, JT64P}; //{1, 2, 3, 4, 5, 6, 7, 8, 9}
 enum TIME_UNIT{SEC = 0, MS = 1, US = 2, NS = 3};
 enum Feature{Nor, Poss_Plane, Real_Plane, Edge_Jump, Edge_Plane, Wire, ZeroPoint};
 enum Surround{Prev, Next};

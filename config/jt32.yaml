@@ -6,7 +6,7 @@ common:
     imu_topic:  "/lidar_imu"
     time_sync_en: false
     time_offset_lidar_to_imu: 0.0
-    imu_gyr_unit: "auto"         # auto-detect from acceleration; manual: "rad" or "deg"
+    imu_gyr_unit: "auto"         # prefer explicit driver unit: "rad" or "deg"; auto is heuristic
 
 preprocess:
     lidar_type: 7                # 7: Hesai JT32

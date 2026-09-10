@@ -14,18 +14,18 @@ Checks:
   3. PointCloud2 contains required fields: x y z intensity ring timestamp
   4. 'timestamp' is per-point and monotonically increasing within a frame
   5. 'ring' range matches the declared model (JT16: 0–15, JT32: 0–31,
-     JT128: 0–127)
+     JT128: 0–127, MT60 MT_V7: 0–1)
   6. IMU publish frequency
   7. Driver IMU units — raw g + deg/s vs SI m/s² + rad/s
   8. frame_id of both sensors (for coordinate frame awareness)
 
 Usage (ROS 2):
     ros2 run fast_lio check_input.py
-    ros2 run fast_lio check_input.py --lidar_topic /lidar_points --imu_topic /lidar_imu --model jt128
+    ros2 run fast_lio check_input.py --lidar_topic /lidar_points --imu_topic /lidar_imu --model mt60
 
 Usage (ROS 1):
     rosrun fast_lio check_input.py
-    rosrun fast_lio check_input.py --lidar_topic /lidar_points --imu_topic /lidar_imu --model jt128
+    rosrun fast_lio check_input.py --lidar_topic /lidar_points --imu_topic /lidar_imu --model mt60
 """
 
 import argparse
@@ -57,6 +57,8 @@ MODEL_SPECS = {
     "jt16":  {"scan_line": 16},
     "jt32":  {"scan_line": 32},
     "jt128": {"scan_line": 128},
+    "jt64p": {"scan_line": 64},
+    "mt60":  {"scan_line": 2},
 }
 REQUIRED_FIELDS = {"x", "y", "z", "intensity", "ring", "timestamp"}
 
@@ -303,10 +305,17 @@ class InputChecker:
             self.model_label = "JT128"
             return
         max_ring = max(vals)
-        if max_ring <= 15:
+        if max_ring <= 1:
+            print(f"{WARN} ring max={max_ring} is ambiguous: MT60 MT_V7 uses "
+                  "rings 0–1, but a sparse JT frame may look the same. "
+                  "Defaulting to JT16; pass --model mt60 for MT60 data.")
+            model = "jt16"
+        elif max_ring <= 15:
             model = "jt16"
         elif max_ring <= 31:
             model = "jt32"
+        elif max_ring <= 63:
+            model = "jt64p"
         else:
             model = "jt128"
         self.spec = MODEL_SPECS[model]
@@ -340,8 +349,11 @@ class InputChecker:
             return
         t0   = _stamp_sec(msgs[0].header.stamp)
         t1   = _stamp_sec(msgs[-1].header.stamp)
+        if t0 == 0.0 and t1 == 0.0:
+            print(f"{FAIL} IMU timestamps are all zero — FAST-LIO2 cannot synchronize")
+            return
         if t1 <= t0:
-            print(f"{WARN} IMU timestamps not increasing — check driver clock")
+            print(f"{FAIL} IMU timestamps not increasing — check driver clock")
             return
         freq = (len(msgs) - 1) / (t1 - t0)
         if freq < 50:
@@ -367,7 +379,10 @@ class InputChecker:
         # Hesai ROS Driver versions switch acceleration and gyro units together.
         # Raw SDK output is near 1 g + deg/s; ROS-conformant output is near
         # 9.81 m/s² + rad/s. Acceleration is reliable even while stationary.
-        if median_acc < 4.0:
+        if median_acc < 0.1:
+            print(f"{FAIL} IMU acceleration is zero/invalid: median ‖a‖={median_acc:.3f}; "
+                  "FAST-LIO2 cannot initialize")
+        elif median_acc < 4.0:
             print(f"{INFO} driver IMU output is raw: median ‖a‖={median_acc:.3f} g, "
                   f"gyro is deg/s (median ‖ω‖={median_gyro:.3f}). "
                   f"Use common.imu_gyr_unit: \"auto\" (recommended) or \"deg\"")
@@ -416,14 +431,14 @@ class InputChecker:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Validate LiDAR and IMU inputs for FAST-LIO2 (Hesai JT)")
+        description="Validate LiDAR and IMU inputs for FAST-LIO2 (Hesai JT/MT60)")
     parser.add_argument("--lidar_topic", default="/lidar_points",
                         help="Point cloud topic  (default: /lidar_points)")
     parser.add_argument("--imu_topic",   default="/lidar_imu",
                         help="IMU topic           (default: /lidar_imu)")
     parser.add_argument("--model",       default="auto",
                         choices=list(MODEL_SPECS.keys()) + ["auto"],
-                        help="LiDAR model: jt16, jt32, jt128, or auto "
+                        help="LiDAR model: jt16, jt32, jt64p, jt128, mt60, or auto "
                              "(auto-detect from ring range; default: auto)")
     parser.add_argument("--timeout",     type=float, default=8.0,
                         help="Seconds to wait for messages  (default: 8.0)")

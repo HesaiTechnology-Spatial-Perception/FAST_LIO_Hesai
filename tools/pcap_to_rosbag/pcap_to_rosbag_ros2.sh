@@ -76,13 +76,13 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ── validation ────────────────────────────────────────────────────────────────
-[[ -n "$MODEL" ]]      || die "--model is required (jt16, jt32, or jt128)"
+[[ -n "$MODEL" ]]      || die "--model is required (jt16, jt32, jt64p, or jt128)"
 [[ -n "$PCAP" ]]       || die "--pcap is required"
 [[ -n "$CORRECTION" ]] || die "--correction is required"
 [[ -n "$OUTPUT" ]]     || die "--output is required"
 [[ -n "$DRIVER_WS" ]]  || die "--driver-ws is required"
 
-[[ "$MODEL" == "jt16" || "$MODEL" == "jt32" || "$MODEL" == "jt128" ]] || die "--model must be jt16, jt32, or jt128"
+[[ "$MODEL" == "jt16" || "$MODEL" == "jt32" || "$MODEL" == "jt64p" || "$MODEL" == "jt128" ]] || die "--model must be jt16, jt32, jt64p, or jt128"
 [[ -f "$PCAP" ]]       || die "PCAP file not found: $PCAP"
 [[ -f "$CORRECTION" ]] || die "Correction file not found: $CORRECTION"
 [[ -z "$FIRETIME" || -f "$FIRETIME" ]] || die "Firetime file not found: $FIRETIME"
