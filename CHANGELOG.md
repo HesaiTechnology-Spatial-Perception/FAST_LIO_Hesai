@@ -4,6 +4,9 @@ All notable changes to the ROS 1 branch. The ROS 2 branch keeps its own CHANGELO
 
 ## [Unreleased]
 
+- Ignore exited zombie descendants during process-group cleanup in minimal
+  containers; still terminate live descendants after their leader exits.
+
 - Order ROS 1 mapping and sanitizer targets after message generation so clean
   parallel builds cannot compile before `fast_lio/Pose6D.h` exists.
 

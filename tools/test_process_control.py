@@ -9,6 +9,50 @@ TOOLS = Path(__file__).resolve().parent
 
 
 class ProcessControlTests(unittest.TestCase):
+    def test_exited_orphan_is_not_treated_as_a_live_process_group(self):
+        self.check_orphan(False, 0)
+
+    def test_live_orphan_still_requires_termination(self):
+        self.check_orphan(True, 124)
+
+    def check_orphan(self, live, expected):
+        # A private subreaper simulates container PID 1; it always reaps the
+        # fixture, including if the supervisor accidentally misses a live child.
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            pidfile = folder/'pid'
+            child = folder/'orphan.py'
+            child.write_text("import os,time,signal,sys\nfrom pathlib import Path\n"
+                "signal.signal(signal.SIGINT,signal.SIG_IGN)\n"
+                "signal.signal(signal.SIGTERM,signal.SIG_IGN)\n"
+                "pid=os.fork()\n"
+                + ("if pid==0: time.sleep(60); os._exit(0)\n" if live else "if pid==0: os._exit(0)\n")
+                + "Path(sys.argv[1]).write_text(str(pid))\n"
+                + ("time.sleep(.05)\n" if live else
+                   "while Path('/proc/%d/stat'%pid).read_text().rpartition(') ')[2].split()[0]!='Z': time.sleep(.01)\n"))
+            supervisor = folder/'supervisor.py'
+            supervisor.write_text("import ctypes,os,signal,subprocess,sys\nfrom pathlib import Path\n"
+                "assert ctypes.CDLL(None).prctl(36,1,0,0,0)==0\n"
+                "try:\n p=subprocess.run(sys.argv[2:],timeout=8)\n"
+                "finally:\n"
+                " if Path(sys.argv[1]).exists():\n"
+                "  try: os.kill(int(Path(sys.argv[1]).read_text()),signal.SIGKILL)\n"
+                "  except ProcessLookupError: pass\n"
+                " while True:\n"
+                "  try: os.waitpid(-1,0)\n"
+                "  except ChildProcessError: break\n"
+                "sys.exit(p.returncode)\n")
+            script = '''source "$1"
+python3 "$2" python3 "$3" "$4" & pid=$!
+wait "$pid"
+stop_process "$pid" 0 0
+exit $?
+'''
+            result = subprocess.run(['python3', str(supervisor), str(pidfile), 'bash', '-c', script,
+                'test', str(TOOLS/'process_control.sh'), str(TOOLS/'launch_process.py'), str(child), str(pidfile)],
+                capture_output=True, text=True, timeout=12)
+            self.assertEqual(result.returncode, expected, result.stderr)
+
     def test_shutdown_reaps_graceful_child(self):
         self.check_shutdown(False, 0)
 
