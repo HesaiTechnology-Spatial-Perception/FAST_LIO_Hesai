@@ -4,6 +4,9 @@ All notable changes to the ROS 2 branch. The ROS 1 branch (`main`) keeps its own
 
 ## [Unreleased]
 
+- Ignore exited zombie descendants during process-group cleanup in minimal
+  containers; still terminate live descendants after their leader exits.
+
 - Pin a public driver/SDK reference and document per-model support, message
   contracts, validation scope and unavailable public JT32/MT60 combinations.
 - Remove unsupported legacy model launches and obsolete Livox GDB examples;

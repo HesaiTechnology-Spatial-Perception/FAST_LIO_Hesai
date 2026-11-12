@@ -1,7 +1,25 @@
 #!/usr/bin/env bash
 # Children are started by launch_process.py in their own process groups.
 process_alive() {
-    kill -0 "$1" 2>/dev/null || kill -0 -- "-$1" 2>/dev/null
+    local pid="$1" stat_file record state parent group rest
+    kill -0 "$pid" 2>/dev/null || kill -0 -- "-$pid" 2>/dev/null || return 1
+    # kill -0 also succeeds for zombies. Minimal container PID 1 processes may
+    # leave exited grandchildren unreaped; those cannot receive another signal.
+    [[ -d /proc/self ]] || return 0
+    if { IFS= read -r record < "/proc/$pid/stat"; } 2>/dev/null; then
+        read -r state parent group rest <<< "${record##*) }"
+        [[ "$state" == Z || "$state" == X ]] || return 0
+    fi
+    # The leader can exit before a live descendant. Inspect the whole owned
+    # group before allowing wait/cleanup to finish, ignoring only dead tasks.
+    for stat_file in /proc/[0-9]*/stat; do
+        { IFS= read -r record < "$stat_file"; } 2>/dev/null || continue
+        read -r state parent group rest <<< "${record##*) }"
+        if [[ "$group" == "$pid" && "$state" != Z && "$state" != X ]]; then
+            return 0
+        fi
+    done
+    return 1
 }
 
 stop_process() {
