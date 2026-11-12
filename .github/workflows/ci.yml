@@ -9,6 +9,7 @@ on:
 jobs:
   ros2-humble:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     container: ros:humble-ros-base
     steps:
       - uses: actions/checkout@v4
@@ -60,7 +61,8 @@ jobs:
           ln -s "$GITHUB_WORKSPACE" /ws/src/FAST_LIO_Hesai
           cd /ws
           colcon build --executor sequential --event-handlers console_direct+ --cmake-args -DFAST_LIO_PREPROCESS_ASAN_TEST=ON
-          ASAN_OPTIONS=detect_leaks=0 /ws/build/fast_lio/fastlio_preprocess_test
+          # Keep instrumentation; fatal signals fail instead of recursively logging.
+          timeout --kill-after=5 60 env ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:handle_segv=0 /ws/build/fast_lio/fastlio_preprocess_test
 
       - name: Installed end-to-end and runtime regressions
         shell: bash

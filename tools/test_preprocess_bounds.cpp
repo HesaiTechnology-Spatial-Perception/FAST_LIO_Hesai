@@ -3,6 +3,7 @@
 #include "preprocess.h"
 #include <iostream>
 int main() {
+    std::cerr << "Starting preprocess scan-line bounds regressions" << std::endl;
     for (int count : {0, 1, 7, 8, 9, 10, 40, 128}) {
         for (float spacing : {0.001f, 0.1f}) {
             Preprocess pre;

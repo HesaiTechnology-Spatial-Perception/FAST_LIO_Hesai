@@ -123,8 +123,9 @@ option(FAST_LIO_PREPROCESS_ASAN_TEST "Build the preprocessing bounds regression 
 if(FAST_LIO_PREPROCESS_ASAN_TEST)
   add_executable(fastlio_preprocess_test tools/test_preprocess_bounds.cpp src/preprocess.cpp)
   target_include_directories(fastlio_preprocess_test PRIVATE src include ${PCL_INCLUDE_DIRS})
-  target_compile_options(fastlio_preprocess_test PRIVATE -fsanitize=address -fno-omit-frame-pointer -O1 -g)
-  target_link_libraries(fastlio_preprocess_test ${PCL_LIBRARIES} -fsanitize=address)
+  # GCC 9 ASan can collide with high-ASLR PIE mappings before main (sanitizers#1614).
+  target_compile_options(fastlio_preprocess_test PRIVATE -fsanitize=address -fno-omit-frame-pointer -fno-pie -O1 -g)
+  target_link_libraries(fastlio_preprocess_test ${PCL_LIBRARIES} -fsanitize=address -no-pie)
   target_compile_definitions(fastlio_preprocess_test PRIVATE FAST_LIO_TEST_ROS2)
   ament_target_dependencies(fastlio_preprocess_test rclcpp sensor_msgs pcl_conversions)
 endif()
