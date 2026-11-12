@@ -49,8 +49,8 @@ required by the BSD license.
 
 **Source**: https://github.com/hku-mars/ikd-Tree  
 **Authors**: Yixi Cai, Wei Xu, Fu Zhang — MARS Lab, HKU  
-**License**: See `include/ikd-Tree/` (MIT / BSD; refer to the submodule for
-the current license text)  
+**License**: GNU General Public License v2 (GPL-2.0; refer to the upstream
+submodule's `LICENSE` file for the complete text)
 **Included as**: git submodule at `include/ikd-Tree/`
 
 **Reference paper**:
@@ -94,9 +94,15 @@ Files newly created by Hesai Technology (not derived from upstream):
 | File | Description |
 | ---- | ----------- |
 | `config/jt16.yaml` | FAST-LIO2 configuration for Hesai JT16 (ROS 2) |
+| `config/jt32.yaml` | FAST-LIO2 configuration for Hesai JT32 (ROS 2) |
+| `config/jt64p.yaml` | FAST-LIO2 configuration for Hesai JT64P (ROS 2) |
 | `config/jt128.yaml` | FAST-LIO2 configuration for Hesai JT128 (ROS 2) |
+| `config/MT60.yaml` | FAST-LIO2 configuration for Hesai MT60 (ROS 2) |
 | `launch/mapping_jt16.launch.py` | ROS 2 launch file for JT16 |
+| `launch/mapping_jt32.launch.py` | ROS 2 launch file for JT32 |
+| `launch/mapping_jt64p.launch.py` | ROS 2 launch file for JT64P |
 | `launch/mapping_jt128.launch.py` | ROS 2 launch file for JT128 |
+| `launch/mapping_mt60.launch.py` | ROS 2 launch file for MT60 |
 | `tools/check_input.py` | Runtime input validation script |
 | `tools/check_config.py` | Static yaml config validation script |
 | `tools/check_map.py` | Map quality analysis script |
@@ -109,8 +115,8 @@ Files substantially modified by Hesai Technology from upstream:
 
 | File | Upstream origin | Hesai changes |
 | ---- | --------------- | ------------- |
-| `src/preprocess.h` | FAST_LIO upstream | Rewritten for JT16/JT128; removed non-Hesai handlers |
-| `src/preprocess.cpp` | FAST_LIO upstream | Rewritten for JT16/JT128; removed non-Hesai handlers |
+| `src/preprocess.h` | FAST_LIO upstream | Rewritten for Hesai JT-series and MT60; removed non-Hesai handlers |
+| `src/preprocess.cpp` | FAST_LIO upstream | Rewritten for Hesai JT-series and MT60; removed non-Hesai handlers |
 | `src/laserMapping.cpp` | FAST_LIO upstream | ROS 2 port; map_save service; imu_gyr_unit parameter |
 
 All Hesai modifications are released under GPL-2.0, consistent with the

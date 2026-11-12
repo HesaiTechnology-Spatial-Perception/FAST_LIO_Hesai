@@ -22,20 +22,32 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86)|(X86)|(amd64)|(AMD64)")
   ProcessorCount(N)
   message("Processer number:  ${N}")
 
-  if(N GREATER 4)
-    add_definitions(-DMP_EN)
-    add_definitions(-DMP_PROC_NUM=3)
-    message("core for MP: 3")
-  elseif(N GREATER 3)
-    add_definitions(-DMP_EN)
-    add_definitions(-DMP_PROC_NUM=2)
-    message("core for MP: 2")
-  else()
-    add_definitions(-DMP_PROC_NUM=1)
+  # Keep the historical conservative default, but allow high-core hosts to
+  # opt in explicitly when scan-matching throughput is the bottleneck.
+  set(FAST_LIO_MP_PROC_NUM "" CACHE STRING
+      "OpenMP workers for FAST-LIO scan matching (default: 3 on x86 hosts)")
+  if(FAST_LIO_MP_PROC_NUM STREQUAL "")
+    if(N GREATER 4)
+      set(FAST_LIO_MP_PROC_NUM 3)
+    elseif(N GREATER 3)
+      set(FAST_LIO_MP_PROC_NUM 2)
+    else()
+      set(FAST_LIO_MP_PROC_NUM 1)
+    endif()
   endif()
 else()
-  add_definitions(-DMP_PROC_NUM=1)
+  set(FAST_LIO_MP_PROC_NUM 1 CACHE STRING
+      "OpenMP workers for FAST-LIO scan matching")
 endif()
+
+if(NOT FAST_LIO_MP_PROC_NUM MATCHES "^[1-9][0-9]*$")
+  message(FATAL_ERROR "FAST_LIO_MP_PROC_NUM must be a positive integer")
+endif()
+if(FAST_LIO_MP_PROC_NUM GREATER 1)
+  add_definitions(-DMP_EN)
+endif()
+add_definitions(-DMP_PROC_NUM=${FAST_LIO_MP_PROC_NUM})
+message("OpenMP workers for scan matching: ${FAST_LIO_MP_PROC_NUM}")
 
 find_package(OpenMP QUIET)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
@@ -107,6 +119,16 @@ endif()
 
 ament_target_dependencies(fastlio_mapping ${dependencies})
 
+option(FAST_LIO_PREPROCESS_ASAN_TEST "Build the preprocessing bounds regression with AddressSanitizer" OFF)
+if(FAST_LIO_PREPROCESS_ASAN_TEST)
+  add_executable(fastlio_preprocess_test tools/test_preprocess_bounds.cpp src/preprocess.cpp)
+  target_include_directories(fastlio_preprocess_test PRIVATE src include ${PCL_INCLUDE_DIRS})
+  target_compile_options(fastlio_preprocess_test PRIVATE -fsanitize=address -fno-omit-frame-pointer -O1 -g)
+  target_link_libraries(fastlio_preprocess_test ${PCL_LIBRARIES} -fsanitize=address)
+  target_compile_definitions(fastlio_preprocess_test PRIVATE FAST_LIO_TEST_ROS2)
+  ament_target_dependencies(fastlio_preprocess_test rclcpp sensor_msgs pcl_conversions)
+endif()
+
 # ---------------- Install --------------- #
 install(TARGETS fastlio_mapping
   DESTINATION lib/${PROJECT_NAME}
@@ -114,6 +136,10 @@ install(TARGETS fastlio_mapping
 
 install(PROGRAMS
   tools/run_fastlio.sh
+  tools/prepare_runtime_config.py
+  tools/mapping_control.py
+  tools/launch_process.py
+  tools/bag_metadata.py
   tools/check_input.py
   tools/check_config.py
   tools/check_map.py
@@ -124,11 +150,32 @@ install(PROGRAMS
 
 install(FILES
   tools/pcap_to_rosbag/common.sh
+  tools/process_control.sh
   DESTINATION lib/${PROJECT_NAME}
 )
 
+# Install the public model catalog explicitly; local overrides are not distributable.
+install(FILES
+  config/jt16.yaml
+  config/jt32.yaml
+  config/jt64p.yaml
+  config/jt128.yaml
+  config/MT60.yaml
+  DESTINATION share/${PROJECT_NAME}/config
+)
+
+install(FILES
+  launch/mapping_jt16.launch.py
+  launch/mapping_jt32.launch.py
+  launch/mapping_jt64p.launch.py
+  launch/mapping_jt128.launch.py
+  launch/mapping_mt60.launch.py
+  launch/mapping.launch.py
+  DESTINATION share/${PROJECT_NAME}/launch
+)
+
 install(
-  DIRECTORY config launch rviz
+  DIRECTORY rviz
   DESTINATION share/${PROJECT_NAME}
 )
 

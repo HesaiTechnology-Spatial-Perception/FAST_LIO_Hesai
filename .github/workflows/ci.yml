@@ -22,14 +22,72 @@ jobs:
             build-essential \
             libeigen3-dev \
             libpcl-dev \
+            python3-yaml \
+            python3-numpy \
             ros-humble-pcl-ros \
-            ros-humble-pcl-conversions
+            ros-humble-pcl-conversions \
+            ros-humble-rosbag2 \
+            ros-humble-rosbag2-py \
+            ros-humble-ros2bag
+
+      - name: Run static and offline regression checks
+        shell: bash
+        run: |
+          for script in tools/run_fastlio.sh tools/process_control.sh tools/pcap_to_rosbag/*.sh; do bash -n "$script" || exit 1; done
+          python3 tools/check_public_catalog.py --root . --ros 2
+          python3 tools/check_config.py --config config/jt16.yaml --model jt16 --ros 2
+          python3 tools/check_config.py --config config/jt32.yaml --model jt32 --ros 2
+          python3 tools/check_config.py --config config/jt64p.yaml --model jt64p --ros 2
+          python3 tools/check_config.py --config config/jt128.yaml --model jt128 --ros 2
+          python3 tools/check_config.py --config config/MT60.yaml --model mt60 --ros 2
+          python3 tools/test_runtime_config.py
+          python3 tools/test_reliability.py
+          python3 tools/test_process_control.py
+          g++ -std=c++14 -Iinclude tools/test_map_export.cpp -o /tmp/map_export_test
+          /tmp/map_export_test /tmp/fastlio_export_ci
+          g++ -std=c++14 -Iinclude tools/test_imu_initialization_guard.cpp -o /tmp/imu_initialization_guard_test
+          /tmp/imu_initialization_guard_test
+          g++ -std=c++14 -Iinclude tools/test_runtime_config_validation.cpp -o /tmp/runtime_config_validation_test
+          /tmp/runtime_config_validation_test
 
       - name: Build (colcon)
+        env:
+          CMAKE_BUILD_PARALLEL_LEVEL: "2"
         shell: bash
         run: |
           source /opt/ros/humble/setup.bash
           mkdir -p /ws/src
           ln -s "$GITHUB_WORKSPACE" /ws/src/FAST_LIO_Hesai
           cd /ws
-          colcon build --event-handlers console_direct+
+          colcon build --executor sequential --event-handlers console_direct+ --cmake-args -DFAST_LIO_PREPROCESS_ASAN_TEST=ON
+          ASAN_OPTIONS=detect_leaks=0 /ws/build/fast_lio/fastlio_preprocess_test
+
+      - name: Installed end-to-end and runtime regressions
+        shell: bash
+        timeout-minutes: 15
+        env:
+          ROS_DOMAIN_ID: "87"
+          ROS_LOCALHOST_ONLY: "1"
+          RMW_IMPLEMENTATION: rmw_fastrtps_cpp
+        run: |
+          source /opt/ros/humble/setup.bash
+          mkdir -p /test_ws
+          cp -a /ws/install /test_ws/install
+          source /test_ws/install/setup.bash
+          python3 tools/check_public_catalog.py --root /test_ws/install/fast_lio/share/fast_lio --ros 2
+          python3 tools/test_install_ros.py --ros 2 --workspace /test_ws --output /tmp/fastlio-ci-install
+          python3 tools/test_runtime_ros.py --ros 2 --executable /test_ws/install/fast_lio/lib/fast_lio/fastlio_mapping \
+            --config /test_ws/install/fast_lio/share/fast_lio/config/jt16.yaml --output /tmp/fastlio-ci-runtime
+
+      - name: Upload integration evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ros2-integration-evidence
+          path: |
+            /tmp/fastlio-ci-install/**/*.log
+            /tmp/fastlio-ci-install/**/*.json
+            /tmp/fastlio-ci-runtime/**/*.log
+            /tmp/fastlio-ci-runtime/**/*.json
+            /tmp/fastlio-ci-master.log
+          if-no-files-found: ignore
