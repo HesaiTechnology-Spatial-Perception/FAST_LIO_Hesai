@@ -1,3 +1,11 @@
+feature_extract_enable: false
+point_filter_num: 6
+max_iteration: 3
+filter_size_surf: 0.5
+filter_size_map: 0.3
+cube_side_length: 1000
+runtime_pos_log_enable: false
+
 # Copyright 2026 Hesai Technology. All rights reserved.
 # SPDX-License-Identifier: GPL-2.0
 # Configuration for Hesai JT128 LiDAR with FAST-LIO2 (ROS 1).
@@ -8,6 +16,7 @@ common:
     time_offset_lidar_to_imu: 0.0
     # Driver releases differ: v2.0.12 publishes raw deg/s, while v2.0.10/2.0.11 publish rad/s.
     imu_gyr_unit: "auto"         # prefer explicit driver unit: "rad" or "deg"; auto is heuristic
+    imu_max_gap: 0.05             # stop on larger sensor-time gaps throughout the run (seconds)
 
 preprocess:
     lidar_type: 6                # 6: Hesai JT128
@@ -20,6 +29,10 @@ mapping:
     gyr_cov: 0.1
     b_acc_cov: 0.0001
     b_gyr_cov: 0.0001
+    # Require a stationary startup window before estimating gyro bias.
+    imu_init_delay: 0.0
+    imu_init_duration: 0.5
+    imu_init_max_gyr_norm: 0.03       # rad/s; stop if startup is already moving
     fov_degree:    360
     det_range:     200.0
     extrinsic_est_en:  true
@@ -37,7 +50,8 @@ publish:
 pcd_save:
     pcd_save_en: false
     interval: -1
-    leaf_size: 0.0           # >0: voxel-downsample the saved map (m); bounds memory on long runs
+    mode: 1hz             # raw | voxel | 1hz | all; all also writes _origin and _1hz
+    leaf_size: 0.1          # weighted voxel centroids; does not alter the estimator
 
 trajectory_save:
-    tum_en: false            # true: export trajectory to Log/traj_tum.txt (TUM format)
+    tum_en: false            # true: export trajectory to common.log_dir/traj_tum.txt (TUM format)

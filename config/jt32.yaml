@@ -1,3 +1,11 @@
+feature_extract_enable: false
+point_filter_num: 1
+max_iteration: 3
+filter_size_surf: 0.5
+filter_size_map: 0.5
+cube_side_length: 1000
+runtime_pos_log_enable: false
+
 # Copyright 2026 Hesai Technology. All rights reserved.
 # SPDX-License-Identifier: GPL-2.0
 # Configuration for Hesai JT32 LiDAR with FAST-LIO2 (ROS 1).
@@ -7,6 +15,7 @@ common:
     time_sync_en: false
     time_offset_lidar_to_imu: 0.0
     imu_gyr_unit: "auto"         # prefer explicit driver unit: "rad" or "deg"; auto is heuristic
+    imu_max_gap: 0.05             # stop on larger sensor-time gaps throughout the run (seconds)
 
 preprocess:
     lidar_type: 7                # 7: Hesai JT32
@@ -36,7 +45,8 @@ publish:
 pcd_save:
     pcd_save_en: false
     interval: -1
-    leaf_size: 0.0
+    mode: 1hz             # raw | voxel | 1hz | all; all also writes _origin and _1hz
+    leaf_size: 0.1          # weighted voxel centroids; does not alter the estimator
 
 trajectory_save:
     tum_en: false

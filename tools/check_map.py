@@ -100,8 +100,11 @@ def _load_pcd_minimal(path):
         fields, sizes, types, counts = [], [], [], []
         npts = 0
         data_fmt = "ascii"
-        while True:
-            line = f.readline().decode("ascii", "replace").strip()
+        for header_line in range(128):
+            raw_line = f.readline()
+            if not raw_line:
+                raise ValueError("Truncated PCD header: missing DATA line")
+            line = raw_line.decode("ascii", "replace").strip()
             if not line:
                 continue
             key = line.split()[0].upper() if line.split() else ""
@@ -118,6 +121,13 @@ def _load_pcd_minimal(path):
             elif key == "DATA":
                 data_fmt = line.split()[1]
                 break
+        else:
+            raise ValueError("PCD header exceeds 128 lines")
+        if data_fmt not in ("ascii", "binary"):
+            raise ValueError("Builtin parser supports ascii/binary PCD only; use Open3D for binary_compressed")
+        counts = counts or [1] * len(fields)
+        if not fields or len(sizes) != len(fields) or len(types) != len(fields) or len(counts) != len(fields) or any(c < 1 for c in counts):
+            raise ValueError("Invalid PCD FIELDS/SIZE/TYPE/COUNT layout")
         idx = {n: i for i, n in enumerate(fields)}
         for r in ("x", "y", "z"):
             if r not in idx:
@@ -126,15 +136,22 @@ def _load_pcd_minimal(path):
             arr = np.loadtxt(f, dtype=np.float64)
             if arr.ndim == 1:
                 arr = arr.reshape(1, -1)
-            return arr[:, [idx["x"], idx["y"], idx["z"]]]
+            columns = np.cumsum([0] + counts[:-1])
+            if len(arr) != npts or arr.shape[1] != sum(counts):
+                raise ValueError("PCD point count or ASCII column count mismatch")
+            return arr[:, [columns[idx["x"]], columns[idx["y"]], columns[idx["z"]]]]
         # binary
         counts = counts or [1] * len(fields)
         np_types = {("F", 4): "f4", ("F", 8): "f8", ("U", 1): "u1",
                     ("U", 2): "u2", ("U", 4): "u4", ("I", 1): "i1",
                     ("I", 2): "i2", ("I", 4): "i4"}
-        dtype = np.dtype([(fields[i], np_types[(types[i], sizes[i])])
+        dtype = np.dtype([(fields[i], np_types[(types[i], sizes[i])], (counts[i],))
+                          if counts[i] > 1 else (fields[i], np_types[(types[i], sizes[i])])
                           for i in range(len(fields))])
-        raw = np.frombuffer(f.read(npts * dtype.itemsize), dtype=dtype)
+        payload = f.read()
+        if len(payload) != npts * dtype.itemsize:
+            raise ValueError("PCD binary payload does not match header point count")
+        raw = np.frombuffer(payload, dtype=dtype)
         return np.stack([raw["x"], raw["y"], raw["z"]], axis=1).astype(np.float64)
 
 
@@ -161,6 +178,15 @@ def pc2_to_xyz(msg, max_points=400_000):
 # ── metrics ─────────────────────────────────────────────────────────────────
 
 def analyze_geometry(pts, v: Verdict):
+    pts = np.asarray(pts)
+    if pts.ndim != 2 or pts.shape[1] != 3 or len(pts) == 0:
+        v.f("Empty or invalid XYZ point cloud")
+        return
+    finite = np.isfinite(pts).all(axis=1)
+    if not finite.all():
+        v.f(f"{int((~finite).sum())} non-finite XYZ points")
+        pts = pts[finite]
+        if not len(pts): return
     n = len(pts)
     bbox = pts.max(axis=0) - pts.min(axis=0)
     v.i(f"points: {n:,}  |  extent (m): "
@@ -176,15 +202,10 @@ def analyze_geometry(pts, v: Verdict):
         v.i("thickness analysis skipped (not enough dense surfaces sampled)")
         return
     med, p90 = float(np.median(thick)), float(np.percentile(thick, 90))
-    if med > THICK_WARN:
-        v.f(f"surface thickness: median {med*100:.1f} cm (p90 {p90*100:.1f} cm) "
-            f"— strong ghosting / misalignment")
-    elif med > THICK_GOOD:
-        v.w(f"surface thickness: median {med*100:.1f} cm (p90 {p90*100:.1f} cm) "
-            f"— some smearing; verify extrinsics / time sync / imu_gyr_unit")
-    else:
-        v.p(f"surface thickness: median {med*100:.1f} cm (p90 {p90*100:.1f} cm) "
-            f"— surfaces are crisp")
+    v.i(f"local plane residual: median {med*100:.1f} cm, p90 {p90*100:.1f} cm (0.3 m cells)")
+    if med > THICK_GOOD:
+        v.w("Locally thick/non-planar cells; inspect corners, objects and registration")
+    v.i("This local statistic cannot detect separate duplicate surfaces or establish global map accuracy.")
 
 
 def _local_thickness(pts, voxel=0.3, min_pts=10, max_points=1_500_000):
@@ -225,13 +246,19 @@ def analyze_trajectory(positions, v: Verdict):
     p = np.array(positions)
     seg = np.linalg.norm(np.diff(p, axis=0), axis=1)
     length = float(seg.sum())
-    z_drift = float(abs(p[-1, 2] - p[0, 2]))
+    if not np.isfinite(p).all():
+        v.f("Trajectory contains non-finite coordinates")
+        return
+    z_change = float(p[-1, 2] - p[0, 2])
+    z_range = float(np.ptp(p[:, 2]))
+    z_excursion = float(np.max(np.abs(p[:, 2] - p[0, 2])))
     v.i(f"trajectory: length {length:.1f} m, {len(p)} poses")
-    if z_drift > Z_DRIFT_WARN:
-        v.w(f"vertical drift {z_drift:.2f} m start→end — if the path was level, "
-            f"this indicates Z drift (insufficient init motion / degeneracy)")
-    else:
-        v.p(f"vertical drift {z_drift:.2f} m — within expected range")
+    v.i(f"Z in the map frame: end-start {z_change:+.2f} m, range {z_range:.2f} m, "
+        f"max excursion from start {z_excursion:.2f} m")
+    if z_range > Z_DRIFT_WARN:
+        v.w("Large Z variation: compare the full trajectory against actual motion and gravity alignment")
+    v.i("Z variation is not measured drift: map axes may be tilted, and the path may change elevation. "
+        "A reference trajectory/level-plane constraint is needed to assess error.")
 
 
 # ── runners ──────────────────────────────────────────────────────────────────
@@ -268,7 +295,7 @@ def run_live(map_topic, odom_topic, timeout, v: Verdict):
     if ros == 2:
         rclpy.init()
         node = rclpy.create_node("fast_lio_check_map")
-        node.create_subscription(PointCloud2, map_topic, map_cb, 1)
+        node.create_subscription(PointCloud2, map_topic, map_cb, __import__("rclpy.qos", fromlist=["qos_profile_sensor_data"]).qos_profile_sensor_data)
         if odom_topic:
             node.create_subscription(Odometry, odom_topic, odom_cb, 50)
         deadline = time.time() + timeout
@@ -319,10 +346,13 @@ def main():
     print(f"{'='*62}\n")
 
     v = Verdict()
-    if args.pcd:
-        run_offline(args.pcd, v)
-    else:
-        run_live(args.map_topic, args.odom_topic, args.timeout, v)
+    try:
+        if args.pcd:
+            run_offline(args.pcd, v)
+        else:
+            run_live(args.map_topic, args.odom_topic, args.timeout, v)
+    except (OSError, ValueError, KeyError) as exc:
+        v.f(str(exc))
 
     print()
     if v.fails:
@@ -330,10 +360,10 @@ def main():
               f"run check_input.py and check_config.py; verify LiDAR-IMU "
               f"extrinsics, time sync, and imu_gyr_unit.")
     elif v.warns:
-        print(f"{WARN} 0 critical issues, {v.warns} warning(s). Map is usable; "
+        print(f"{WARN} 0 critical issues, {v.warns} warning(s). Quality is not established; "
               f"review the notes above to improve quality.")
     else:
-        print(f"{PASS} Map quality looks good.")
+        print(f"{PASS} No issue detected by these limited checks; global map accuracy is not established.")
     print(f"\n{'='*62}\n")
     sys.exit(1 if v.fails else 0)
 

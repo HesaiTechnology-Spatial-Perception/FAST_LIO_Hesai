@@ -9,6 +9,7 @@ on:
 jobs:
   ros1-noetic:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     container: ros:noetic-ros-base-focal
     steps:
       - name: Install Git
@@ -27,10 +28,34 @@ jobs:
             build-essential \
             libeigen3-dev \
             libpcl-dev \
+            python3-yaml \
+            python3-numpy \
             ros-noetic-pcl-ros \
             ros-noetic-pcl-conversions \
             ros-noetic-std-srvs \
-            ros-noetic-tf
+            ros-noetic-tf \
+            ros-noetic-rosbag \
+            ros-noetic-roslaunch
+
+      - name: Run static checks
+        shell: bash
+        run: |
+          for script in tools/run_fastlio.sh tools/process_control.sh tools/pcap_to_rosbag/*.sh; do bash -n "$script" || exit 1; done
+          python3 tools/check_public_catalog.py --root . --ros 1
+          python3 tools/check_config.py --config config/jt16.yaml --model jt16 --ros 1
+          python3 tools/check_config.py --config config/jt32.yaml --model jt32 --ros 1
+          python3 tools/check_config.py --config config/jt64p.yaml --model jt64p --ros 1
+          python3 tools/check_config.py --config config/jt128.yaml --model jt128 --ros 1
+          python3 tools/check_config.py --config config/MT60.yaml --model mt60 --ros 1
+          python3 tools/test_runtime_config.py
+          python3 tools/test_reliability.py
+          python3 tools/test_process_control.py
+          g++ -std=c++14 -Iinclude tools/test_map_export.cpp -o /tmp/map_export_test
+          /tmp/map_export_test /tmp/fastlio_export_ci
+          g++ -std=c++14 -Iinclude tools/test_imu_initialization_guard.cpp -o /tmp/imu_initialization_guard_test
+          /tmp/imu_initialization_guard_test
+          g++ -std=c++14 -Iinclude tools/test_runtime_config_validation.cpp -o /tmp/runtime_config_validation_test
+          /tmp/runtime_config_validation_test
 
       - name: Build (catkin_make)
         shell: bash
@@ -39,4 +64,41 @@ jobs:
           mkdir -p /ws/src
           ln -s "$GITHUB_WORKSPACE" /ws/src/FAST_LIO_Hesai
           cd /ws
-          catkin_make -DCMAKE_BUILD_TYPE=Release
+          catkin_make install -j2 -DCMAKE_BUILD_TYPE=Release -DFAST_LIO_PREPROCESS_ASAN_TEST=ON
+          # Keep instrumentation; fatal signals fail instead of recursively logging.
+          timeout --kill-after=5 60 env ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:handle_segv=0 /ws/devel/lib/fast_lio/fastlio_preprocess_test
+
+      - name: Installed end-to-end and runtime regressions
+        shell: bash
+        timeout-minutes: 15
+        env:
+          ROS_DOMAIN_ID: "87"
+          ROS_LOCALHOST_ONLY: "1"
+          RMW_IMPLEMENTATION: rmw_fastrtps_cpp
+        run: |
+          source /opt/ros/noetic/setup.bash
+          mkdir -p /test_ws
+          cp -a /ws/install /test_ws/install
+          source /test_ws/install/setup.bash
+          python3 tools/check_public_catalog.py --root /test_ws/install/share/fast_lio --ros 1
+          python3 tools/test_install_ros.py --ros 1 --workspace /test_ws --output /tmp/fastlio-ci-install
+          export ROS_MASTER_URI=http://127.0.0.1:11391 ROS_HOSTNAME=127.0.0.1
+          roscore -p 11391 > /tmp/fastlio-ci-master.log 2>&1 &
+          master_pid=$!
+          trap 'kill -INT "$master_pid" 2>/dev/null || true; wait "$master_pid" || true' EXIT
+          timeout 20 bash -c 'until rosparam list >/dev/null 2>&1; do sleep 0.2; done'
+          python3 tools/test_runtime_ros.py --ros 1 --executable /test_ws/install/lib/fast_lio/fastlio_mapping \
+            --config /test_ws/install/share/fast_lio/config/jt16.yaml --output /tmp/fastlio-ci-runtime
+
+      - name: Upload integration evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ros1-integration-evidence
+          path: |
+            /tmp/fastlio-ci-install/**/*.log
+            /tmp/fastlio-ci-install/**/*.json
+            /tmp/fastlio-ci-runtime/**/*.log
+            /tmp/fastlio-ci-runtime/**/*.json
+            /tmp/fastlio-ci-master.log
+          if-no-files-found: ignore

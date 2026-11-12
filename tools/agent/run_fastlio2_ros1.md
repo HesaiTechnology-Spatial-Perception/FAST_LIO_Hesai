@@ -1,7 +1,7 @@
 ---
 name: run-fastlio2-hesai-ros1
 description: >-
-  Set up and run FAST-LIO2 on Hesai JT16 / JT32 / JT128 / MT60 LiDARs on ROS 1 Melodic /
+  Set up and run FAST-LIO2 on Hesai JT16 / JT32 / JT64P / JT128 / MT60 LiDARs on ROS 1 Melodic /
   Noetic (FAST_LIO_Hesai main branch). Detects and configures the local ROS 1
   environment, then runs FAST-LIO2 from a PCAP capture, an existing rosbag, or
   a live sensor. Use when building, configuring, validating, or running
@@ -14,6 +14,45 @@ description: >-
 Target: **ROS 1 Melodic / Noetic**. Build with `catkin_make`, launch with
 `roslaunch`. Package name: `fast_lio`.
 
+## Driver and installed-package support
+
+Use the [driver compatibility matrix](../../DRIVER_COMPATIBILITY.md) for the pinned public driver/SDK,
+model/mode support, message units and evidence limits. JT32 requires a separately
+obtained compatible driver for live/PCAP operation; MT60 needs a verified publisher
+and is not registered for unified PCAP conversion. A model YAML is not a hardware
+qualification. Do not apply a nonzero `--timestamp-offset` to the pinned public
+driver: that driver does not implement the translation option.
+
+Only the five Hesai model launches are distributed (ROS 2 also has the generic
+`mapping.launch.py`). Unsupported legacy launches and the old Livox GDB example
+have been removed. CI checks both source and installed catalogs, runs synthetic
+bag replay and default 1 Hz saving through the installed entry, tests invalid
+input and driver failure, and executes the actual-node regressions. ROS1 additionally
+checks converter-owned and pre-existing masters with a synthetic driver. These
+checks do not replace sensor/firmware qualification or real PCAP decoding tests.
+ROS2 playback waits for stable DDS matching before resume; exact input counts and
+registration coverage remain the acceptance criteria.
+
+## Standard configurations
+
+`config/` ships only the five standard model baselines: `jt16.yaml`, `jt32.yaml`,
+`jt64p.yaml`, `jt128.yaml`, and `MT60.yaml`. Their LiDAR/IMU clock offsets are zero;
+no recording-specific offset or startup delay is preset. These are model defaults,
+not device calibration certificates. Verify IMU units and LiDAR/IMU extrinsics for
+your device. Keep device- or recording-specific overrides outside the checkout and
+select them explicitly with `--config /absolute/path/to/custom.yaml`. Saving remains
+opt-in; the default export mode is sensor-time `1hz`.
+
+## Runtime acceptance
+
+Use the unified entry's full header timestamp audit and frame accounting. A run with
+`skipped_frames > 0`, missing registration coverage, or an IMU sensor-time gap above
+`common.imu_max_gap` (default 0.05 s) is incomplete. Do not declare success from received
+message counts alone. A PCAP clock offset must be explicitly verified and supplied
+with `--timestamp-offset`; all-zero header times are a conversion failure. ROS1 cold
+conversion manages its own local master and preserves an existing master. Live driver
+exit or forced shutdown is a failure. Default map saving remains opt-in sensor-time 1 Hz.
+
 ## Recommended customer entry
 
 ```bash
@@ -21,13 +60,17 @@ Target: **ROS 1 Melodic / Noetic**. Build with `catkin_make`, launch with
 ./tools/run_fastlio.sh jt32 bag /data/jt32.bag
 ./tools/run_fastlio.sh jt16 bag /data/jt16.bag --play-rate 2.0
 ./tools/run_fastlio.sh mt60 bag /data/mt60.bag
-./tools/run_fastlio.sh jt128 pcap /data/JT128/input.pcap
+./tools/run_fastlio.sh jt128 pcap /data/JT128/input.pcap --correction /data/calibration/device.csv
 ```
 
 This entry starts the required processes, handles playback or conversion, and
-cleans up on exit. For bag input it reads the first valid IMU sample and sets
-`deg` or `rad` explicitly before launch. `--play-rate RATE` controls bag/PCAP
-replay speed. Use the detailed workflow below for diagnosis.
+cleans up on exit. `--imu-gyr-unit rad|deg|auto` overrides the model YAML;
+without it, the YAML setting is preserved. All input modes use the node's
+multi-sample heuristic only when the effective unit is `auto`; no first-sample
+bag inference is performed. Acceleration scale cannot prove gyro units:
+prefer explicit units confirmed for the publishing driver (or the driver
+that recorded an existing bag), not a version guessed from its folder name.
+`--play-rate RATE` controls bag/PCAP replay speed.
 
 ## Workflow checklist
 
@@ -43,8 +86,10 @@ replay speed. Use the detailed workflow below for diagnosis.
 ## Step 0: Auto-detect LiDAR model
 
 Detect JT models from the point cloud `ring` field when possible. MT60 MT_V7
-publishes only rings 0 and 1, which is indistinguishable from a sparse JT frame,
-so pass `--model mt60` explicitly for MT60 data.
+publishes only rings 0 and 1, which is indistinguishable from a sparse JT frame.
+JT64P and JT128 both publish rings 0–127 with the same PointCloud2 schema.
+Pass `--model mt60`, `--model jt64p`, or `--model jt128` explicitly for these
+ambiguous layouts.
 
 With the sensor publishing or a rosbag playing (see Step 3), run:
 
@@ -53,18 +98,19 @@ rosrun fast_lio check_input.py          # --model defaults to "auto"
 ```
 
 It prints e.g. `auto-detected model: JT16 (ring max=15)`. Record the detected
-model as `MODEL` (`jt16`, `jt32`, `jt128`, or `mt60`) and substitute it below.
+model as `MODEL` (`jt16`, `jt32`, `jt64p`, `jt128`, or `mt60`) and substitute it below.
 
 | Model | Lines | Config | Launch file | `lidar_type` (ROS 1) |
 | --- | --- | --- | --- | --- |
 | JT16 | 16 | `config/jt16.yaml` | `mapping_jt16.launch` | 5 |
 | JT32 | 32 | `config/jt32.yaml` | `mapping_jt32.launch` | 7 |
+| JT64P | 128 | `config/jt64p.yaml` | `mapping_jt64p.launch` | 9 |
 | JT128 | 128 | `config/jt128.yaml` | `mapping_jt128.launch` | 6 |
 | MT60 MT_V7 | 2 | `config/MT60.yaml` | `mapping_mt60.launch` | 8 |
 
 > JT32 support is pre-adapted in FAST-LIO2, but the current public Hesai ROS
-> Driver does not parse JT32 UDP 1.12. JT32 currently requires the validated
-> internal compatible driver.
+> Driver does not parse JT32 UDP 1.12. JT32 currently requires a compatible
+> driver or a prepared bag with valid point-cloud and IMU topics.
 
 > If no data is flowing yet, first bring up the source (Step 3 Path C for a live
 > sensor, or play a bag), then run the detection above.
@@ -119,13 +165,13 @@ export HESAI_DRIVER_WS=~/hesai_ros_ws
 
 # The JT16/JT32/JT128 directory name supplies the model; MT60 PCAP conversion
 # is not registered.
-bash tools/pcap_to_rosbag/pcap_to_rosbag_ros1.sh /path/to/JT128/input.pcap
+bash tools/pcap_to_rosbag/pcap_to_rosbag_ros1.sh /path/to/JT128/input.pcap --correction /data/calibration/device.csv
 ```
 
-The script discovers calibration files and writes
-`/path/to/JT128/input_ros1.bag`. Run the same command with `--dry-run` first
-when reviewing paths. Add named options only when auto-discovery reports a
-specific missing value. Continue with Path B.
+Pass a device-matched `--correction` file explicitly; add `--firetime` when
+required. Neither MODEL nor an old driver config proves device identity.
+The driver must accept a private `config_path` and exit normally at PCAP EOF.
+Continue with Path B.
 
 ### Path B: Run from a rosbag
 
@@ -211,3 +257,17 @@ It reports surface thickness (ghosting), density, and trajectory drift, and
 maps issues to fixes (extrinsics / time sync / `imu_gyr_unit` /
 `point_filter_num`). If it flags ghosting, re-run `check_input.py` and
 `check_config.py` to find the root cause.
+
+## Export and acceptance rules
+
+Use `--save-map --map-mode all` to produce the voxel, original registered-scan,
+and sensor-time 1 Hz variants from one run. Default export is the sensor-time 1 Hz accumulated map.
+Select `--map-mode voxel` for a 0.1 m map.
+Read `result.json` and `node_status.json`, `drain.json` and `map_save.json`; a process exit or a
+nonempty PCD alone is not acceptance. Do not label `check_map.py` results as
+geometric accuracy or use start/end Z alone as full-trajectory drift.
+Clock rollback requires a fresh mapping run. See `tools/README.md` for the
+checkpoint, failure and disk-space behavior.
+
+For ROS 2 bags, the runner waits for matched publishers and configures Reliable
+transport on both ends. Live sensor subscriptions retain Best Effort compatibility.

@@ -25,7 +25,7 @@ Usage (ROS 2):
 
 Usage (ROS 1):
     rosrun fast_lio check_input.py
-    rosrun fast_lio check_input.py --lidar_topic /lidar_points --imu_topic /lidar_imu --model mt60
+    rosrun fast_lio check_input.py --lidar_topic /lidar_points --imu_topic /lidar_imu --model jt128
 """
 
 import argparse
@@ -39,6 +39,7 @@ import time
 try:
     import rclpy
     from rclpy.node import Node
+    from rclpy.qos import QoSProfile, ReliabilityPolicy
     from sensor_msgs.msg import Imu, PointCloud2
     ROS_VER = 2
 except ImportError:
@@ -47,20 +48,24 @@ except ImportError:
         from sensor_msgs.msg import Imu, PointCloud2
         ROS_VER = 1
     except ImportError:
-        sys.exit(
-            "[ERROR] No ROS Python library found. "
-            "Source your ROS workspace first (e.g. source /opt/ros/humble/setup.bash)."
-        )
+        ROS_VER = 0
+
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 MODEL_SPECS = {
     "jt16":  {"scan_line": 16},
     "jt32":  {"scan_line": 32},
     "jt128": {"scan_line": 128},
-    "jt64p": {"scan_line": 64},
+    # JT64P and JT128 share the same 128-ring PointCloud2 layout.
+    "jt64p": {"scan_line": 128},
     "mt60":  {"scan_line": 2},
 }
 REQUIRED_FIELDS = {"x", "y", "z", "intensity", "ring", "timestamp"}
+EXPECTED_FIELD_TYPES = {
+    "x": 7, "y": 7, "z": 7, "intensity": 7,  # PointField.FLOAT32
+    "ring": 4,                                    # PointField.UINT16
+    "timestamp": 8,                               # PointField.FLOAT64
+}
 
 PASS = "\033[92m[PASS]\033[0m"
 FAIL = "\033[91m[FAIL]\033[0m"
@@ -87,11 +92,22 @@ def _read_field(pc_msg, field_name, fmt, size, max_points=500):
     field = next((f for f in pc_msg.fields if f.name == field_name), None)
     if field is None:
         return None
-    step = pc_msg.point_step
-    off  = field.offset
-    n    = min(pc_msg.width * pc_msg.height, max_points)
+    expected = {"<f": 7, "<H": 4, "<d": 8}.get(fmt)
+    if field.datatype != expected or field.count != 1:
+        return None
+    step, off = pc_msg.point_step, field.offset
+    point_count = pc_msg.width * pc_msg.height
+    n = point_count if max_points is None else min(point_count, max_points)
     data = bytes(pc_msg.data)
-    return [struct.unpack_from(fmt, data, i * step + off)[0] for i in range(n)]
+    if n == 0 or step <= 0 or off < 0 or off + size > step or pc_msg.row_step < pc_msg.width * step:
+        return []
+    offsets = [(i // pc_msg.width) * pc_msg.row_step + (i % pc_msg.width) * step + off for i in range(n)]
+    if offsets[-1] + size > len(data):
+        return []
+    if pc_msg.is_bigendian and fmt.startswith("<"):
+        fmt = ">" + fmt[1:]
+    return [struct.unpack_from(fmt, data, offset)[0] for offset in offsets]
+
 
 
 # ── Main checker ──────────────────────────────────────────────────────────────
@@ -104,6 +120,7 @@ class InputChecker:
         self.spec        = None if self.auto_model else MODEL_SPECS[model]
         self.model_label = "AUTO" if self.auto_model else model.upper()
         self.timeout     = timeout
+        self.failures = 0
         self.expected_unit = expected_unit   # from yaml, for comparison (or None)
 
         self.pc_msg    = None    # first full frame (for field/ring/timestamp checks)
@@ -111,6 +128,10 @@ class InputChecker:
         self.imu_msgs  = []
         self._lock     = threading.Lock()
         self.done      = threading.Event()
+
+    def _fail(self, message):
+        self.failures += 1
+        print(f"{FAIL} {message}")
 
     # ── callbacks ─────────────────────────────────────────────────────────
 
@@ -157,8 +178,8 @@ class InputChecker:
             rclpy.shutdown()
             return
 
-        node.create_subscription(PointCloud2, self.lidar_topic, self._pc_cb,  10)
-        node.create_subscription(Imu,         self.imu_topic,   self._imu_cb, 100)
+        node.create_subscription(PointCloud2, self.lidar_topic, self._pc_cb, QoSProfile(depth=16, reliability=ReliabilityPolicy.BEST_EFFORT))
+        node.create_subscription(Imu,         self.imu_topic,   self._imu_cb, QoSProfile(depth=1000, reliability=ReliabilityPolicy.BEST_EFFORT))
 
         deadline = time.time() + self.timeout
         while time.time() < deadline and not self.done.is_set():
@@ -194,7 +215,7 @@ class InputChecker:
         print()
 
         if self.pc_msg is None:
-            print(f"{FAIL} No point cloud received on '{self.lidar_topic}' "
+            self._fail(f"No point cloud received on '{self.lidar_topic}' "
                   f"within {self.timeout}s — is the driver running?")
         else:
             if self.auto_model:
@@ -207,7 +228,7 @@ class InputChecker:
             self._report_frame_id("LiDAR", self.pc_msg.header.frame_id)
 
         if not self.imu_msgs:
-            print(f"{FAIL} No IMU data received on '{self.imu_topic}' "
+            self._fail(f"No IMU data received on '{self.imu_topic}' "
                   f"within {self.timeout}s — is the driver running?")
         else:
             self._check_imu_freq()
@@ -223,37 +244,58 @@ class InputChecker:
         present = _field_names(self.pc_msg)
         missing = REQUIRED_FIELDS - present
         if missing:
-            print(f"{FAIL} PointCloud2 missing fields: {sorted(missing)}")
+            self._fail(f"PointCloud2 missing fields: {sorted(missing)}")
             print(f"       present: {sorted(present)}")
             print(f"       → FAST-LIO2 will fail to parse point cloud")
         else:
             print(f"{PASS} PointCloud2 fields: "
                   f"{', '.join(sorted(REQUIRED_FIELDS))} — all present")
+        fields = {field.name: field for field in self.pc_msg.fields}
+        mismatches = [
+            f"{name}=datatype {fields[name].datatype}, count {fields[name].count}"
+            for name, expected in EXPECTED_FIELD_TYPES.items()
+            if name in fields and
+            (fields[name].datatype != expected or fields[name].count != 1)
+        ]
+        if mismatches:
+            self._fail(f"PointCloud2 field type mismatch: " + "; ".join(mismatches))
+            print("       expected x/y/z/intensity=float32, ring=uint16, timestamp=float64")
+        elif not missing:
+            print(f"{PASS} PointCloud2 field datatypes match the Hesai parser")
 
     # 4 ── timestamp monotonicity
     def _check_timestamp(self):
-        vals = _read_field(self.pc_msg, "timestamp", "<d", 8)
-        if vals is None:
-            print(f"{FAIL} 'timestamp' field missing — motion undistortion impossible")
+        vals = _read_field(self.pc_msg, "timestamp", "<d", 8, max_points=None)
+        if not vals:
+            self._fail(f"'timestamp' field missing, empty, or truncated — "
+                  "motion undistortion impossible")
             return
         if len(vals) < 2:
             print(f"{WARN} Too few points to verify timestamp monotonicity")
             return
-        reversals = sum(1 for a, b in zip(vals, vals[1:]) if b < a)
-        span_ms   = (vals[-1] - vals[0]) * 1e3
+        if not all(math.isfinite(t) for t in vals):
+            self._fail("Non-finite per-point timestamps")
+            return
+        span = max(vals) - min(vals)
+        if span <= 0:
+            self._fail("All point timestamps are identical; motion compensation is unavailable")
+            return
+        reversals = sum(b < a for a, b in zip(vals, vals[1:]))
+        print(f"{INFO} per-point timestamp span: {span:.9g} in field units ({len(vals)} points)")
         if reversals:
-            print(f"{FAIL} timestamp not monotonic: {reversals} reversal(s) in "
-                  f"{len(vals)} points — motion undistortion will be wrong")
+            print(f"{WARN} {reversals} point timestamp reversal(s); FAST-LIO sorts points by time. "
+                  "Check packet ordering and the header/first-point time convention.")
         else:
-            print(f"{PASS} timestamp: monotonic, frame span = {span_ms:.2f} ms "
-                  f"(per-point timestamps OK)")
+            print(f"{PASS} Point timestamps are finite and ordered in the inspected frame")
 
     # 4b ── timestamp_unit inference
     def _check_timestamp_unit(self):
-        vals = _read_field(self.pc_msg, "timestamp", "<d", 8)
+        vals = _read_field(self.pc_msg, "timestamp", "<d", 8, max_points=None)
         if vals is None or len(vals) < 2:
             return
-        span = vals[-1] - vals[0]   # per-point time span within one frame
+        if not all(math.isfinite(t) for t in vals):
+            return
+        span = max(vals) - min(vals)   # per-point time span within one frame
         if span <= 0:
             return
         # A single JT frame spans ~0.1 s of real time. Infer the unit from the
@@ -267,7 +309,7 @@ class InputChecker:
             print(f"{INFO} timestamp_unit inferred: {inferred} ({label}). "
                   f"Set preprocess.timestamp_unit: {inferred} in yaml")
         elif self.expected_unit != inferred:
-            print(f"{FAIL} timestamp_unit mismatch: yaml says "
+            self._fail(f"timestamp_unit mismatch: yaml says "
                   f"{self.expected_unit}, data looks like {inferred} ({label}) "
                   f"— motion undistortion will be wrong")
         else:
@@ -279,7 +321,10 @@ class InputChecker:
         if len(stamps) < 3:
             print(f"{WARN} Only {len(stamps)} frame(s) — cannot assess frame drops")
             return
-        intervals = [b - a for a, b in zip(stamps, stamps[1:]) if b > a]
+        if any(b <= a for a, b in zip(stamps, stamps[1:])):
+            self._fail("LiDAR header timestamps repeat or move backwards")
+            return
+        intervals = [b - a for a, b in zip(stamps, stamps[1:])]
         if not intervals:
             print(f"{WARN} Frame timestamps not increasing — check driver clock")
             return
@@ -293,13 +338,13 @@ class InputChecker:
                   f"— may degrade mapping")
         else:
             print(f"{PASS} frame rate: ~{rate:.1f} Hz, no drops "
-                  f"in {len(stamps)} frames")
+                  f"observed in this {len(stamps)}-frame sample; this is not a full-bag audit")
 
     # 0 ── auto-detect model from ring range
     def _detect_model(self):
-        vals = _read_field(self.pc_msg, "ring", "<H", 2)
-        if vals is None:
-            print(f"{WARN} cannot auto-detect model: 'ring' field missing — "
+        vals = _read_field(self.pc_msg, "ring", "<H", 2, max_points=None)
+        if not vals:
+            print(f"{WARN} cannot auto-detect model: 'ring' field missing or empty — "
                   f"defaulting to JT128. Pass --model explicitly.")
             self.spec = MODEL_SPECS["jt128"]
             self.model_label = "JT128"
@@ -314,25 +359,30 @@ class InputChecker:
             model = "jt16"
         elif max_ring <= 31:
             model = "jt32"
-        elif max_ring <= 63:
-            model = "jt64p"
         else:
             model = "jt128"
         self.spec = MODEL_SPECS[model]
-        self.model_label = model.upper()
-        print(f"{INFO} auto-detected model: {self.model_label} "
-              f"(ring max={max_ring})")
+        if model == "jt128":
+            self.model_label = "JT128/JT64P"
+            print(f"{WARN} auto-detected shared 128-ring layout "
+                  f"(ring max={max_ring}); JT128 and JT64P cannot be "
+                  "distinguished from PointCloud2 fields. Pass --model "
+                  "jt128 or --model jt64p explicitly.")
+        else:
+            self.model_label = model.upper()
+            print(f"{INFO} auto-detected model: {self.model_label} "
+                  f"(ring max={max_ring})")
 
     # 5 ── ring range
     def _check_ring_range(self):
-        vals = _read_field(self.pc_msg, "ring", "<H", 2)
-        if vals is None:
-            print(f"{FAIL} 'ring' field missing — cannot check scan line range")
+        vals = _read_field(self.pc_msg, "ring", "<H", 2, max_points=None)
+        if not vals:
+            self._fail(f"'ring' field missing, empty, or truncated — cannot check scan line range")
             return
         max_ring  = max(vals)
         scan_line = self.spec["scan_line"]
         if max_ring >= scan_line:
-            print(f"{FAIL} ring max={max_ring} ≥ scan_line={scan_line} "
+            self._fail(f"ring max={max_ring} ≥ scan_line={scan_line} "
                   f"({self.model_label}) — check preprocess.scan_line config")
         elif max_ring < scan_line - 1:
             print(f"{WARN} ring max={max_ring}, expected up to {scan_line - 1} "
@@ -350,14 +400,22 @@ class InputChecker:
         t0   = _stamp_sec(msgs[0].header.stamp)
         t1   = _stamp_sec(msgs[-1].header.stamp)
         if t0 == 0.0 and t1 == 0.0:
-            print(f"{FAIL} IMU timestamps are all zero — FAST-LIO2 cannot synchronize")
+            self._fail(f"IMU timestamps are all zero — FAST-LIO2 cannot synchronize")
             return
         if t1 <= t0:
-            print(f"{FAIL} IMU timestamps not increasing — check driver clock")
+            self._fail(f"IMU timestamps not increasing — check driver clock")
             return
+        stamps = [_stamp_sec(m.header.stamp) for m in msgs]
+        intervals = [b - a for a, b in zip(stamps, stamps[1:])]
+        if any(t <= 0 for t in intervals):
+            self._fail("IMU timestamps repeat or move backwards inside the sample")
+            return
+        median = sorted(intervals)[len(intervals) // 2]
+        if max(intervals) > 2.5 * median:
+            print(f"{WARN} IMU gap: {max(intervals)*1000:.2f} ms (median {median*1000:.2f} ms)")
         freq = (len(msgs) - 1) / (t1 - t0)
         if freq < 50:
-            print(f"{FAIL} IMU frequency {freq:.1f} Hz — too low "
+            self._fail(f"IMU frequency {freq:.1f} Hz — too low "
                   f"(FAST-LIO2 expects ≥ 100 Hz)")
         elif freq < 150:
             print(f"{WARN} IMU frequency {freq:.1f} Hz — lower than typical 200 Hz")
@@ -373,6 +431,9 @@ class InputChecker:
             a = m.linear_acceleration
             gyro_mags.append(math.sqrt(g.x**2 + g.y**2 + g.z**2))
             acc_mags.append(math.sqrt(a.x**2 + a.y**2 + a.z**2))
+        if not all(math.isfinite(v) for v in gyro_mags + acc_mags):
+            self._fail("Non-finite IMU acceleration or angular velocity")
+            return
         median_gyro = sorted(gyro_mags)[len(gyro_mags) // 2]
         median_acc = sorted(acc_mags)[len(acc_mags) // 2]
 
@@ -380,16 +441,16 @@ class InputChecker:
         # Raw SDK output is near 1 g + deg/s; ROS-conformant output is near
         # 9.81 m/s² + rad/s. Acceleration is reliable even while stationary.
         if median_acc < 0.1:
-            print(f"{FAIL} IMU acceleration is zero/invalid: median ‖a‖={median_acc:.3f}; "
+            self._fail(f"IMU acceleration is zero/invalid: median ‖a‖={median_acc:.3f}; "
                   "FAST-LIO2 cannot initialize")
         elif median_acc < 4.0:
-            print(f"{INFO} driver IMU output is raw: median ‖a‖={median_acc:.3f} g, "
-                  f"gyro is deg/s (median ‖ω‖={median_gyro:.3f}). "
-                  f"Use common.imu_gyr_unit: \"auto\" (recommended) or \"deg\"")
+            print(f"{INFO} acceleration is consistent with raw g units: median ‖a‖={median_acc:.3f} g, "
+                  f"gyro may be deg/s (median ‖ω‖={median_gyro:.3f}). "
+                  f"Verify the driver contract before selecting common.imu_gyr_unit: \"deg\"")
         elif median_acc > 6.0:
-            print(f"{PASS} driver IMU output is SI: median ‖a‖={median_acc:.3f} m/s², "
-                  f"gyro is rad/s (median ‖ω‖={median_gyro:.4f}). "
-                  f"Use common.imu_gyr_unit: \"auto\" (recommended) or \"rad\"")
+            print(f"{PASS} acceleration is consistent with SI units: median ‖a‖={median_acc:.3f} m/s², "
+                  f"gyro may be rad/s (median ‖ω‖={median_gyro:.4f}). "
+                  f"Verify the driver contract before selecting common.imu_gyr_unit: \"rad\"")
         else:
             print(f"{WARN} cannot infer driver IMU units: median ‖a‖={median_acc:.3f}. "
                   f"Keep the sensor stationary at startup or set imu_gyr_unit manually")
@@ -403,7 +464,7 @@ class InputChecker:
         offset_ms = abs(nearest - pc_t) * 1e3
         # also check overall ranges overlap (different clock base → huge offset)
         if offset_ms > 1000:
-            print(f"{FAIL} LiDAR/IMU time bases differ by {offset_ms:.0f} ms "
+            self._fail(f"LiDAR/IMU time bases differ by {offset_ms:.0f} ms "
                   f"— likely different clock sources; FAST-LIO2 will fail to sync")
         elif offset_ms > 100:
             print(f"{WARN} LiDAR/IMU stamp offset {offset_ms:.0f} ms — consider "
@@ -423,13 +484,16 @@ class InputChecker:
         if found:
             print(f"{PASS} topic '{topic}': publisher found")
         else:
-            print(f"{FAIL} topic '{topic}': no publisher — "
+            self._fail(f"topic '{topic}': no publisher — "
                   f"is the driver started and publishing?")
 
 
 # ── entry point ───────────────────────────────────────────────────────────────
 
 def main():
+    if ROS_VER == 0:
+        print("[ERROR] Source a ROS workspace before checking live inputs.", file=sys.stderr)
+        return 2
     parser = argparse.ArgumentParser(
         description="Validate LiDAR and IMU inputs for FAST-LIO2 (Hesai JT/MT60)")
     parser.add_argument("--lidar_topic", default="/lidar_points",
@@ -472,5 +536,8 @@ def main():
     print(f"\n{'='*62}\n")
 
 
+    return 1 if checker.failures else 0
+
+
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
