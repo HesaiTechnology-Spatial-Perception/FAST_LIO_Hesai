@@ -4,6 +4,9 @@ All notable changes to the ROS 1 branch. The ROS 2 branch keeps its own CHANGELO
 
 ## [Unreleased]
 
+- Order ROS 1 mapping and sanitizer targets after message generation so clean
+  parallel builds cannot compile before `fast_lio/Pose6D.h` exists.
+
 - Pin a public driver/SDK reference and document per-model support, message
   contracts, validation scope and unavailable public JT32/MT60 combinations.
 - Remove unsupported legacy model launches and obsolete Livox GDB examples;

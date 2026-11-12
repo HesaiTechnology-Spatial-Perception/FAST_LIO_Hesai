@@ -92,11 +92,14 @@ catkin_package(
 )
 
 add_executable(fastlio_mapping src/laserMapping.cpp include/ikd-Tree/ikd_Tree.cpp src/preprocess.cpp)
+# Both consumers include generated Pose6D.h; order them after message generation.
+add_dependencies(fastlio_mapping ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 target_link_libraries(fastlio_mapping ${catkin_LIBRARIES} ${PCL_LIBRARIES})
 
 option(FAST_LIO_PREPROCESS_ASAN_TEST "Build the preprocessing bounds regression with AddressSanitizer" OFF)
 if(FAST_LIO_PREPROCESS_ASAN_TEST)
   add_executable(fastlio_preprocess_test tools/test_preprocess_bounds.cpp src/preprocess.cpp)
+  add_dependencies(fastlio_preprocess_test ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
   target_include_directories(fastlio_preprocess_test PRIVATE src include ${PCL_INCLUDE_DIRS})
   target_compile_options(fastlio_preprocess_test PRIVATE -fsanitize=address -fno-omit-frame-pointer -O1 -g)
   target_link_libraries(fastlio_preprocess_test ${PCL_LIBRARIES} -fsanitize=address)
