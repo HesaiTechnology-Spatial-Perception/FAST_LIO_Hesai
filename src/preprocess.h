@@ -5,7 +5,8 @@
 // (https://github.com/hku-mars/FAST_LIO) by the MARS Lab, HKU.
 // Modified by Hesai Technology, 2026-06:
 //   - Removed non-Hesai LiDAR handlers; added hesai_point_type::Point
-//   - Added JT16 / JT128 / JT32 / MT60 lidar_type enum (ROS 1: 5/6/7/8)
+//   - Added JT16 / JT128 / JT32 / MT60 / JT64P lidar_type enum
+//     (ROS 1: 5/6/7/8/9); JT64P shares JT128's PointCloud2 schema.
 #ifndef PREPROCESS_H
 #define PREPROCESS_H
 
@@ -41,6 +42,8 @@ struct orgtype
   orgtype()
   {
     range = 0;
+    dista = 0;
+    angle[0] = angle[1] = 0;
     edj[Prev] = Nr_nor;
     edj[Next] = Nr_nor;
     ftype = Nor;

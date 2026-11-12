@@ -4,6 +4,8 @@
 #include <mutex>
 #include <thread>
 #include <fstream>
+#include <iomanip>
+#include <sstream>
 #include <csignal>
 #include <ros/ros.h>
 #include <so3_math.h>
@@ -22,6 +24,7 @@
 #include <sensor_msgs/PointCloud2.h>
 #include <geometry_msgs/Vector3.h>
 #include "use-ikfom.hpp"
+#include "imu_initialization_guard.h"
 #include "preprocess.h"
 
 /// *************Preconfiguration
@@ -49,6 +52,9 @@ class ImuProcess
   void set_gyr_bias_cov(const V3D &b_g);
   void set_acc_bias_cov(const V3D &b_a);
   void set_init_window(double delay_sec, double duration_sec);
+  void set_init_max_gyr_norm(double limit) { init_max_gyr_norm_ = limit; }
+  const std::string &initialization_error() const { return init_error_; }
+  bool is_initializing() const { return imu_need_init_; }
   Eigen::Matrix<double, 12, 12> Q;
   void Process(const MeasureGroup &meas,  esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state, PointCloudXYZI::Ptr pcl_un_);
 
@@ -80,6 +86,10 @@ class ImuProcess
   double start_timestamp_;
   double init_delay_sec_;
   double init_duration_sec_;
+  double init_max_gyr_norm_ = 0.0;  // disabled unless explicitly configured
+  MeasureGroup init_candidate_;
+  std::string init_error_;
+  bool init_guard_accepted_ = false;
   double last_lidar_end_time_;
   int    init_iter_num = 1;
   bool   b_first_frame_ = true;
@@ -115,6 +125,7 @@ void ImuProcess::Reset()
   imu_need_init_    = true;
   start_timestamp_  = -1;
   init_iter_num     = 1;
+  init_error_.clear();
   v_imu_.clear();
   IMUpose.clear();
   last_imu_.reset(new sensor_msgs::Imu());
@@ -359,7 +370,9 @@ void ImuProcess::Process(const MeasureGroup &meas,  esekfom::esekf<state_ikfom, 
   double t1,t2,t3;
   t1 = omp_get_wtime();
 
-  if(meas.imu.empty()) {return;};
+  // Never let an early return expose the previous scan to the mapping update.
+  cur_pcl_un_->clear();
+  if (!init_error_.empty() || meas.imu.empty()) {return;}
   ROS_ASSERT(meas.lidar != nullptr);
 
   if (imu_need_init_)
@@ -384,6 +397,39 @@ void ImuProcess::Process(const MeasureGroup &meas,  esekfom::esekf<state_ikfom, 
           (init_duration_sec_ <= 0.0 || stamp <= init_window_end))
         init_meas.imu.push_back(imu);
     }
+    const bool duration_complete = init_duration_sec_ <= 0.0
+        || meas.lidar_end_time >= init_window_end;
+    if (init_max_gyr_norm_ != 0.0 && !init_guard_accepted_)
+    {
+      // Collect and validate the entire window before modifying gravity/bias.
+      init_candidate_.imu.insert(init_candidate_.imu.end(),
+                                 init_meas.imu.begin(), init_meas.imu.end());
+      std::vector<fast_lio::ImuInitSample> samples;
+      samples.reserve(init_candidate_.imu.size());
+      for (const auto &imu : init_candidate_.imu)
+      {
+        const auto &g = imu->angular_velocity;
+        const auto &a = imu->linear_acceleration;
+        samples.push_back({imu->header.stamp.toSec(),
+                           V3D(g.x, g.y, g.z).norm(), V3D(a.x, a.y, a.z).norm()});
+      }
+      init_error_ = fast_lio::check_imu_initialization(
+          samples, init_window_start, init_duration_sec_, init_max_gyr_norm_, duration_complete);
+      if (!init_error_.empty()) return;
+      if (!duration_complete)
+      {
+        last_imu_ = meas.imu.back();
+        return;
+      }
+      init_meas.imu = init_candidate_.imu;
+      init_guard_accepted_ = true;
+      std::ostringstream init_log;
+      init_log << "[imu_init_guard] accepted sensor window " << std::fixed
+                << std::setprecision(6) << samples.front().stamp << " .. "
+                << samples.back().stamp << ", samples=" << samples.size()
+                << ", gyro_limit=" << init_max_gyr_norm_ << " rad/s";
+      std::cout << init_log.str() << std::endl;
+    }
     if (init_meas.imu.empty())
     {
       last_imu_ = meas.imu.back();
@@ -401,8 +447,6 @@ void ImuProcess::Process(const MeasureGroup &meas,  esekfom::esekf<state_ikfom, 
     last_imu_   = meas.imu.back();
 
     state_ikfom imu_state = kf_state.get_x();
-    const bool duration_complete = init_duration_sec_ <= 0.0
-        || meas.lidar_end_time >= init_window_start + init_duration_sec_;
     if (init_iter_num > MAX_INI_COUNT && duration_complete)
     {
       cov_acc *= pow(G_m_s2 / mean_acc.norm(), 2);

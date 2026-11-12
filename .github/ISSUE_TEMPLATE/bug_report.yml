@@ -6,7 +6,7 @@ body:
     attributes:
       value: |
         Before filing, please run the input checker with your sensor or rosbag active and paste its output below — it answers most environment questions in one shot:
-        `python3 tools/check_input.py --model jt16` (or `--model jt128`)
+        `python3 tools/check_input.py --model jt16` (replace the model as needed)
   - type: input
     id: version
     attributes:
@@ -20,7 +20,7 @@ body:
     attributes:
       label: Environment
       description: OS, ROS distro, real machine or VM, LiDAR model
-      placeholder: "Ubuntu 22.04, Humble, VMware VM, JT16"
+      placeholder: "Ubuntu 20.04, Noetic, physical host, JT128"
     validations:
       required: true
   - type: textarea
@@ -34,6 +34,20 @@ body:
     attributes:
       label: Topic list
       description: "`ros2 topic list` / `rostopic list` output"
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: bag_info
+    attributes:
+      label: rosbag metadata (bag playback only)
+      description: Paste `rosbag info <bag>` or `ros2 bag info <bag>` output; write N/A for a live sensor.
+      render: text
+  - type: textarea
+    id: configuration
+    attributes:
+      label: Effective configuration
+      description: Paste the startup `config summary` line and list any YAML or command-line overrides.
       render: text
     validations:
       required: true

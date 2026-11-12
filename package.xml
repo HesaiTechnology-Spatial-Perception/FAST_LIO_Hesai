@@ -1,20 +1,21 @@
 <?xml version="1.0"?>
 <package>
   <name>fast_lio</name>
-  <version>0.0.0</version>
+  <version>0.1.0</version>
 
   <description>
-    This is a modified version of LOAM which is original algorithm
-    is described in the following paper:
-    J. Zhang and S. Singh. LOAM: Lidar Odometry and Mapping in Real-time.
-      Robotics: Science and Systems Conference (RSS). Berkeley, CA, July 2014.
+    FAST-LIO2 adaptation for Hesai JT-series and MT60 LiDARs on ROS 1.
+    Publishes LiDAR-inertial odometry, registered point clouds, and optional
+    PCD maps from standard PointCloud2 and Imu input topics.
   </description>
 
-  <maintainer email="dev@livoxtech.com">claydergc</maintainer>
+  <maintainer email="opensource@hesaitech.com">Hesai Technology</maintainer>
 
   <license>GPL-2.0</license>
 
   <author email="zhangji@cmu.edu">Ji Zhang</author>
+  <author>FAST-LIO contributors</author>
+  <author email="opensource@hesaitech.com">Hesai Technology</author>
   
   <buildtool_depend>catkin</buildtool_depend>
   <build_depend>geometry_msgs</build_depend>
@@ -39,9 +40,13 @@
   <run_depend>pcl_ros</run_depend>
   <run_depend>hesai_ros_driver</run_depend>
   <run_depend>message_runtime</run_depend>
+  <run_depend>python3-numpy</run_depend>
+  <run_depend>python3-yaml</run_depend>
+  <run_depend>rosbag</run_depend>
+  <run_depend>roslaunch</run_depend>
+  <run_depend>rviz</run_depend>
 
   <test_depend>rostest</test_depend>
-  <test_depend>rosbag</test_depend>
 
   <export>
   </export>

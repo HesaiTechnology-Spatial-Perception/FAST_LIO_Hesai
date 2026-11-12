@@ -83,47 +83,19 @@ for section in (drv, drv.get("pcap_type") or {}, drv.get("lidar_udp_type") or {}
 PY
 }
 
+# File names and the driver's previous configuration cannot prove device identity.
+# Calibration selection is explicit, including when a single candidate exists.
 pcap_find_calibration() {
-    local kind="$1"
-    local configured_key pattern directory
-    if [[ "$kind" == "correction" ]]; then
-        configured_key="correction_file_path"
-        directory="angle_correction"
-        case "$MODEL" in
-            jt16)  pattern='*JT16*' ;;
-            jt32)  pattern='*JT32*' ;;
-            jt64p) pattern='*JT64P*' ;;
-            jt128) pattern='*JT128*' ;;
-        esac
-    else
-        configured_key="firetimes_path"
-        directory="firetime_correction"
-        case "$MODEL" in
-            jt16)  pattern='*JT16*' ;;
-            jt32)  pattern='*JT32*' ;;
-            jt64p) pattern='*JT64P*' ;;
-            jt128) pattern='*JT128*' ;;
-        esac
-    fi
-
-    local candidate
-    while IFS= read -r candidate; do
-        [[ -f "$candidate" ]] && { printf '%s\n' "$candidate"; return 0; }
-    done < <(pcap_config_paths "$configured_key")
-
-    local driver_repo search_root
-    driver_repo=$(dirname "$(dirname "$DRIVER_CONFIG")")
-    for search_root in \
-        "$driver_repo" \
-        "${HOME}/HesaiLidar_SDK_2.0" \
-        "${HOME}/Documents/PandarViewDataFiles" \
-        "${HOME}/PandarView2" \
-        "${HOME}/文档/PandarViewDataFiles"; do
-        [[ -d "$search_root" ]] || continue
-        candidate=$(find "$search_root" -type f -path "*/${directory}/*" -iname "$pattern" -print 2>/dev/null | sort | head -n 1)
-        [[ -n "$candidate" ]] && { printf '%s\n' "$candidate"; return 0; }
-    done
+    warn "Calibration cannot be verified from MODEL alone; pass a device-matched --correction (and --firetime if required)." >&2
     return 1
+}
+
+pcap_tool_path() {
+    if [[ -f "$SCRIPT_DIR/../$1" ]]; then
+        printf '%s\n' "$SCRIPT_DIR/../$1"
+    else
+        printf '%s\n' "$SCRIPT_DIR/$1"
+    fi
 }
 
 pcap_resolve_defaults() {
@@ -131,6 +103,7 @@ pcap_resolve_defaults() {
 
     [[ "$PLAY_RATE" =~ ^[0-9]+([.][0-9]+)?$ ]] || \
         die "--play-rate must be a positive number"
+    awk -v rate="$PLAY_RATE" 'BEGIN { exit !(rate > 0) }' || die "--play-rate must be greater than zero"
     [[ "$TIMESTAMP_OFFSET" =~ ^-?[0-9]+([.][0-9]+)?$ ]] || \
         die "--timestamp-offset must be a number"
 
@@ -182,16 +155,9 @@ pcap_resolve_defaults() {
     pcap_find_driver_config "$DRIVER_WS" || \
         die "Cannot find Hesai driver config.yaml under $DRIVER_WS/src"
 
-    if [[ -z "$CORRECTION" ]]; then
-        CORRECTION=$(pcap_find_calibration correction) || \
-            die "Cannot auto-find a $MODEL angle correction file; pass --correction"
-    fi
+    [[ -n "$CORRECTION" ]] || die "Pass --correction with the calibration file matching this device; automatic calibration selection is disabled"
     [[ -f "$CORRECTION" ]] || die "Correction file not found: $CORRECTION"
     CORRECTION=$(readlink -f "$CORRECTION")
-
-    if [[ -z "$FIRETIME" ]]; then
-        FIRETIME=$(pcap_find_calibration firetime || true)
-    fi
     [[ -z "$FIRETIME" || -f "$FIRETIME" ]] || die "Firetime file not found: $FIRETIME"
     [[ -z "$FIRETIME" ]] || FIRETIME=$(readlink -f "$FIRETIME")
 
@@ -213,4 +179,50 @@ pcap_resolve_defaults() {
     printf '  firetime:   %s\n' "${FIRETIME:-not required}"
     printf '  driver ws:  %s\n' "$DRIVER_WS"
     printf '  output:     %s\n' "$OUTPUT"
+}
+
+
+# Share the bounded process-group shutdown with the mapping entry point.
+source "$(pcap_tool_path process_control.sh)"
+
+pcap_stop_process() {
+    stop_process "$1" 10 2 || true
+}
+
+pcap_ros1_master_ready() {
+    python3 - <<'MASTER_CHECK'
+import os, socket, sys, xmlrpc.client
+socket.setdefaulttimeout(1.0)
+try:
+    result = xmlrpc.client.ServerProxy(os.environ['ROS_MASTER_URI']).getPid('/fastlio_pcap_probe')
+    sys.exit(0 if result[0] == 1 else 1)
+except (OSError, xmlrpc.client.Error):
+    sys.exit(1)
+MASTER_CHECK
+}
+
+pcap_ensure_ros1_master() {
+    export ROS_MASTER_URI="${ROS_MASTER_URI:-http://localhost:11311}"
+    pcap_ros1_master_ready && return 0
+    local port deadline
+    port=$(python3 - <<'MASTER_PORT'
+import os,socket,sys
+from urllib.parse import urlsplit
+uri=urlsplit(os.environ['ROS_MASTER_URI'])
+local={'localhost','127.0.0.1','::1',socket.gethostname(),socket.getfqdn()}
+if uri.scheme != 'http' or uri.hostname not in local:
+    sys.exit('ROS master is unavailable and not local; start the configured ROS_MASTER_URI server.')
+print(uri.port or 11311)
+MASTER_PORT
+    ) || die "Cannot start ROS master for $ROS_MASTER_URI"
+    MASTER_LOG=$(mktemp /tmp/fastlio_roscore_XXXXXX.log)
+    info "Starting owned ROS master at $ROS_MASTER_URI (log: $MASTER_LOG)"
+    python3 "$(pcap_tool_path launch_process.py)" roscore -p "$port" > "$MASTER_LOG" 2>&1 &
+    MASTER_PID=$!
+    deadline=$((SECONDS + 15))
+    while ! pcap_ros1_master_ready; do
+        kill -0 "$MASTER_PID" 2>/dev/null || die "ROS master exited; see $MASTER_LOG"
+        (( SECONDS < deadline )) || die "ROS master readiness timed out; see $MASTER_LOG"
+        sleep 0.2
+    done
 }

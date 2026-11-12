@@ -1,7 +1,9 @@
 cmake_minimum_required(VERSION 2.8.3)
 project(fast_lio)
 
-SET(CMAKE_BUILD_TYPE "Debug")
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
 
 ADD_COMPILE_OPTIONS(-std=c++14 )
 ADD_COMPILE_OPTIONS(-std=c++14 )
@@ -92,7 +94,19 @@ catkin_package(
 add_executable(fastlio_mapping src/laserMapping.cpp include/ikd-Tree/ikd_Tree.cpp src/preprocess.cpp)
 target_link_libraries(fastlio_mapping ${catkin_LIBRARIES} ${PCL_LIBRARIES})
 
+option(FAST_LIO_PREPROCESS_ASAN_TEST "Build the preprocessing bounds regression with AddressSanitizer" OFF)
+if(FAST_LIO_PREPROCESS_ASAN_TEST)
+  add_executable(fastlio_preprocess_test tools/test_preprocess_bounds.cpp src/preprocess.cpp)
+  target_include_directories(fastlio_preprocess_test PRIVATE src include ${PCL_INCLUDE_DIRS})
+  target_compile_options(fastlio_preprocess_test PRIVATE -fsanitize=address -fno-omit-frame-pointer -O1 -g)
+  target_link_libraries(fastlio_preprocess_test ${PCL_LIBRARIES} -fsanitize=address)
+  target_link_libraries(fastlio_preprocess_test ${catkin_LIBRARIES})
+endif()
+
 # ---------------- Install tools --------------- #
+install(TARGETS fastlio_mapping
+  RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
 catkin_install_python(PROGRAMS
   tools/check_input.py
   tools/check_config.py
@@ -102,6 +116,10 @@ catkin_install_python(PROGRAMS
 
 install(PROGRAMS
   tools/run_fastlio.sh
+  tools/prepare_runtime_config.py
+  tools/mapping_control.py
+  tools/launch_process.py
+  tools/bag_metadata.py
   tools/pcap_to_rosbag/pcap_to_rosbag_ros1.sh
   tools/pcap_to_rosbag/pcap_to_rosbag_ros2.sh
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
@@ -109,8 +127,28 @@ install(PROGRAMS
 
 install(FILES
   tools/pcap_to_rosbag/common.sh
+  tools/process_control.sh
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
-install(DIRECTORY config launch rviz
+# Install the public model catalog explicitly; local overrides are not distributable.
+install(FILES
+  config/jt16.yaml
+  config/jt32.yaml
+  config/jt64p.yaml
+  config/jt128.yaml
+  config/MT60.yaml
+  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/config
+)
+
+install(FILES
+  launch/mapping_jt16.launch
+  launch/mapping_jt32.launch
+  launch/mapping_jt64p.launch
+  launch/mapping_jt128.launch
+  launch/mapping_mt60.launch
+  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/launch
+)
+
+install(DIRECTORY rviz_cfg
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION})

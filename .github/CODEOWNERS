@@ -1,0 +1,9 @@
+# Default maintainer for all source, documentation, and automation changes.
+* @Hesai-Jun
+
+# Assign maintainer review for repository governance and release automation.
+/.github/ @Hesai-Jun
+/package.xml @Hesai-Jun
+/CHANGELOG.md @Hesai-Jun
+/RELEASING.md @Hesai-Jun
+/SECURITY.md @Hesai-Jun
