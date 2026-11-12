@@ -62,3 +62,9 @@ creates its own private local master and synthetic driver. CI then runs all case
 in `tools/test_runtime_ros.py` against the installed executable; see the workflow
 for the environment and master setup. Driver changes must update
 `DRIVER_COMPATIBILITY.md` with exact source revisions and the evidence scope.
+
+The optional `fastlio_preprocess_test` sanitizer executable is non-PIE to avoid
+older GCC ASan startup collisions on high-ASLR kernels (see
+https://github.com/google/sanitizers/issues/1614). CI bounds its runtime; sanitizer
+reports, fatal signals and timeouts all fail the job. The mapping target keeps
+its regular build flags.

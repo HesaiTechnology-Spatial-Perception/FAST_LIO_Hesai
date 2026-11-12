@@ -4,6 +4,10 @@ All notable changes to the ROS 1 branch. The ROS 2 branch keeps its own CHANGELO
 
 ## [Unreleased]
 
+- Build the standalone ASan regression as non-PIE for older GCC runtimes on
+  high-ASLR kernels; bound sanitizer and CI execution without disabling
+  instrumentation or changing the mapping executable.
+
 - Ignore exited zombie descendants during process-group cleanup in minimal
   containers; still terminate live descendants after their leader exits.
 
