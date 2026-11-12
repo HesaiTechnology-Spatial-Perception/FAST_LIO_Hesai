@@ -4,7 +4,7 @@
 // This file is part of FAST_LIO_Hesai, a fork of FAST_LIO
 // (https://github.com/hku-mars/FAST_LIO) by the MARS Lab, HKU.
 // The upstream preprocess code has been substantially rewritten for
-// Hesai JT16 / JT32 / JT128 LiDARs.  Original upstream structure is retained
+// Hesai JT16 / JT32 / JT64P / JT128 LiDARs.  Original upstream structure is retained
 // where applicable; original copyright notices are preserved in the
 // accompanying LICENSE file.
 //
@@ -14,6 +14,7 @@
 //   - Added per-point ring + timestamp extraction and frame accumulation
 
 #include "preprocess.h"
+#include "pointcloud_validation.h"
 
 #include <pcl/common/common.h>
 
@@ -24,7 +25,7 @@ Preprocess::Preprocess() : feature_enabled(0), lidar_type(JT16), blind(0.01), po
   SCAN_RATE = 10;
   group_size = 8;
   disA = 0.01;
-  disA = 0.1;  // B?
+  disB = 0.1;
   p2l_ratio = 225;
   limit_maxmid = 6.25;
   limit_midmin = 6.25;
@@ -83,16 +84,13 @@ void Preprocess::process(const sensor_msgs::msg::PointCloud2::UniquePtr &msg, Po
       hesai_handler(msg);
       break;
     case JT128:
+    case JT64P: // JT64P uses the same PointCloud2 schema and 128-ring layout as JT128.
       hesai_handler(msg);
       break;
     case JT32:
       hesai_handler(msg);
       break;
   case MT60:
-    hesai_handler(msg);
-    break;
-
-  case JT64P:
     hesai_handler(msg);
     break;
 
@@ -108,8 +106,11 @@ void Preprocess::hesai_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &m
   pl_surf.clear();
   pl_corn.clear();
   pl_full.clear();
+  fastlio::validate_hesai_cloud(*msg);
   pcl::PointCloud<hesai_point_type::Point> pl_orig;
   pcl::fromROSMsg(*msg, pl_orig);
+  if (!pl_orig.empty() && !std::isfinite(pl_orig.points.front().timestamp))
+    throw std::invalid_argument("Non-finite first-point timestamp");
   int plsize = pl_orig.size();
   pl_corn.reserve(plsize);
   pl_surf.reserve(plsize);
@@ -127,6 +128,9 @@ void Preprocess::hesai_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &m
       double range = pl_orig.points[i].x * pl_orig.points[i].x + pl_orig.points[i].y * pl_orig.points[i].y +
                      pl_orig.points[i].z * pl_orig.points[i].z;
       if (range < (blind * blind)) continue;
+      const auto &source_point = pl_orig.points[i];
+      if (!std::isfinite(source_point.timestamp)) throw std::invalid_argument("Non-finite point timestamp");
+      if (!std::isfinite(source_point.x) || !std::isfinite(source_point.y) || !std::isfinite(source_point.z) || !std::isfinite(source_point.intensity)) continue;
       PointType added_pt;
       added_pt.x = pl_orig.points[i].x;
       added_pt.y = pl_orig.points[i].y;
@@ -146,6 +150,7 @@ void Preprocess::hesai_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &m
     {
       PointCloudXYZI &pl = pl_buff[j];
       int linesize = pl.size();
+      if (linesize == 0) continue;
       vector<orgtype> &types = typess[j];
       types.clear();
       types.resize(linesize);
@@ -172,6 +177,9 @@ void Preprocess::hesai_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &m
                      pl_orig.points[i].z * pl_orig.points[i].z;
       if (range < (blind * blind)) continue;
 
+      const auto &source_point = pl_orig.points[i];
+      if (!std::isfinite(source_point.timestamp)) throw std::invalid_argument("Non-finite point timestamp");
+      if (!std::isfinite(source_point.x) || !std::isfinite(source_point.y) || !std::isfinite(source_point.z) || !std::isfinite(source_point.intensity)) continue;
       PointType added_pt;
       added_pt.x = pl_orig.points[i].x;
       added_pt.y = pl_orig.points[i].y;
@@ -470,6 +478,14 @@ void Preprocess::pub_func(PointCloudXYZI& pl, const rclcpp::Time& ct)
 int Preprocess::plane_judge(const PointCloudXYZI& pl, vector<orgtype>& types, uint i_cur, uint& i_nex,
                             Eigen::Vector3d& curr_direct)
 {
+  i_nex = i_cur;
+  if (i_cur >= pl.size() || types.size() != pl.size() ||
+      static_cast<size_t>(group_size) >= pl.size() - i_cur)
+  {
+    curr_direct.setZero();
+    return 0;
+  }
+
   double group_dis = disA * types[i_cur].range + disB;
   group_dis = group_dis * group_dis;
 
@@ -489,8 +505,12 @@ int Preprocess::plane_judge(const PointCloudXYZI& pl, vector<orgtype>& types, ui
 
   for (;;)
   {
-    if ((i_cur >= pl.size()) || (i_nex >= pl.size()))
-      break;
+    if (i_nex >= pl.size())
+    {
+      // No endpoint reached the minimum plane length; never return size() as a point index.
+      curr_direct.setZero();
+      return 0;
+    }
 
     if (types[i_nex].range < blind)
     {

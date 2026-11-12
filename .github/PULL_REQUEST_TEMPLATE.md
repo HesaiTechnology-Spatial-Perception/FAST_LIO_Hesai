@@ -10,6 +10,9 @@
 ## Verification
 
 - [ ] Builds (`catkin_make` / `colcon build`)
+- [ ] Relevant configuration files pass `tools/check_config.py`
 - [ ] Smoke-tested with a rosbag or live sensor (describe below)
+- [ ] User-visible changes are reflected in README/tool documentation
+- [ ] The English and Chinese developer-center guides are synchronized when behavior changes
 
 <!-- Paste key verification output here -->

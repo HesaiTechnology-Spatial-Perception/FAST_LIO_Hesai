@@ -17,10 +17,11 @@
             # MT_V7 carries LiDAR and IMU samples in the same UDP packet. Keep software
             # synchronization disabled unless an external IMU with a different clock is used.
             time_sync_en: false
-            time_offset_lidar_to_imu: 6.26031
+            time_offset_lidar_to_imu: 0.0
             # Compatible with drivers publishing g + deg/s or m/s^2 + rad/s.
             # Set "deg" or "rad" only when the driver output unit is known and fixed.
             imu_gyr_unit: "auto"
+            imu_max_gap: 0.05             # stop on larger sensor-time gaps throughout the run (seconds)
 
         preprocess:
             lidar_type: 4                # 4: Hesai MT60 (ROS 2)
@@ -34,10 +35,9 @@
             gyr_cov: 0.1
             b_acc_cov: 0.0001
             b_gyr_cov: 0.0001
-            # This recording contains a gyroscope startup transient during the first
-            # ~2.2 s. Initialize from the following stationary 0.2 s interval instead.
-            imu_init_delay: 2.2
-            imu_init_duration: 0.2
+            # Generic startup: keep the sensor stationary; use a separate recording profile for offsets.
+            imu_init_delay: 0.0
+            imu_init_duration: 0.5
             fov_degree: 320.0             # Horizontal FOV: 10° to 330°; vertical spec: -20° to 40°
             det_range: 75.0               # TOF/effective range: 75 m
             extrinsic_est_en: true
@@ -56,7 +56,8 @@
         pcd_save:
             pcd_save_en: false
             interval: -1
-            leaf_size: 0.0           # >0: voxel-downsample the saved map (m); bounds memory on long runs
+            mode: 1hz             # raw | voxel | 1hz | all; all also writes _origin and _1hz
+            leaf_size: 0.1          # weighted voxel centroids; does not alter the estimator
 
         trajectory_save:
-            tum_en: false            # true: export trajectory to Log/traj_tum.txt (TUM format)
+            tum_en: false            # true: export trajectory to common.log_dir/traj_tum.txt (TUM format)

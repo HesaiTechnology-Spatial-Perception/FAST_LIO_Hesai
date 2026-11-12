@@ -18,6 +18,10 @@
             time_offset_lidar_to_imu: 0.0
             # Driver releases differ: v2.0.12 publishes raw deg/s, while v2.0.10/2.0.11 publish rad/s.
             imu_gyr_unit: "auto"         # prefer explicit driver unit: "rad" or "deg"; auto is heuristic
+            imu_max_gap: 0.05             # stop on larger sensor-time gaps throughout the run (seconds)
+            # Retain IMU during heavy JT128 scan processing; keep LiDAR backlog bounded.
+            imu_queue_size: 1000
+            lidar_queue_size: 16
 
         preprocess:
             lidar_type: 2                # 2: Hesai JT128
@@ -30,6 +34,10 @@
             gyr_cov: 0.1
             b_acc_cov: 0.0001
             b_gyr_cov: 0.0001
+            # Require a stationary startup window before estimating gyro bias.
+            imu_init_delay: 0.0
+            imu_init_duration: 0.5
+            imu_init_max_gyr_norm: 0.03       # rad/s; stop if startup is already moving
             fov_degree: 360.0
             det_range: 50.0
             extrinsic_est_en: true
@@ -47,7 +55,8 @@
         pcd_save:
             pcd_save_en: false
             interval: -1
-            leaf_size: 0.0           # >0: voxel-downsample the saved map (m); bounds memory on long runs
+            mode: 1hz             # raw | voxel | 1hz | all; all also writes _origin and _1hz
+            leaf_size: 0.1          # weighted voxel centroids; does not alter the estimator
 
         trajectory_save:
-            tum_en: false            # true: export trajectory to Log/traj_tum.txt (TUM format)
+            tum_en: false            # true: export trajectory to common.log_dir/traj_tum.txt (TUM format)

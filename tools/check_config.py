@@ -18,6 +18,8 @@ Checks:
   - preprocess.timestamp_unit is a valid enum (0-3)
   - common.imu_gyr_unit is "auto", "deg", or "rad"
   - mapping.imu_init_delay and imu_init_duration are non-negative
+  - mapping.imu_init_max_gyr_norm is non-negative when provided
+  - mapping.imu_init_max_gap is positive when provided
   - preprocess.blind is positive and below mapping.det_range
   - mapping.extrinsic_R is a valid rotation matrix (orthonormal, det ~ 1)
   - mapping.extrinsic_T has 3 elements
@@ -29,6 +31,7 @@ Usage:
 """
 
 import argparse
+import math
 import os
 import sys
 
@@ -48,7 +51,9 @@ MODEL_SPECS = {
     "jt32":  {"scan_line": 32,  "lidar_type": {1: 7, 2: 3}},
     "jt128": {"scan_line": 128, "lidar_type": {1: 6, 2: 2}},
     "mt60":  {"scan_line": 2,   "lidar_type": {1: 8, 2: 4}},
-    "jt64p": {"scan_line": 64,  "lidar_type": {1: 9, 2: 5}},
+    # JT64P publishes the same 128-ring PointCloud2 layout as JT128. Keep a
+    # distinct lidar_type only to preserve the model-specific launch/config path.
+    "jt64p": {"scan_line": 128, "lidar_type": {1: 9, 2: 5}},
 }
 
 
@@ -95,6 +100,7 @@ class ConfigChecker:
         self._check_lidar_type(cfg)
         self._check_scan_line(cfg)
         self._check_timestamp_unit(cfg)
+        self._check_point_filter(cfg)
         self._check_gyr_unit(cfg)
         self._check_imu_init_window(cfg)
         self._check_blind(cfg)
@@ -106,7 +112,7 @@ class ConfigChecker:
         expected = self.spec["lidar_type"][self.ros]
         if val is None:
             self._fail("preprocess.lidar_type is missing")
-        elif val != expected:
+        elif not isinstance(val, int) or isinstance(val, bool) or val != expected:
             self._fail(f"preprocess.lidar_type={val}, expected {expected} "
                        f"for {self.model.upper()} on ROS {self.ros}")
         else:
@@ -118,7 +124,7 @@ class ConfigChecker:
         exp = self.spec["scan_line"]
         if val is None:
             self._fail("preprocess.scan_line is missing")
-        elif val != exp:
+        elif not isinstance(val, int) or isinstance(val, bool) or val != exp:
             self._fail(f"preprocess.scan_line={val}, expected {exp} "
                        f"for {self.model.upper()}")
         else:
@@ -128,14 +134,26 @@ class ConfigChecker:
         val = self._get(cfg, "preprocess.timestamp_unit")
         if val is None:
             self._warn("preprocess.timestamp_unit missing (defaults may apply)")
-        elif val not in (0, 1, 2, 3):
+        elif not isinstance(val, int) or isinstance(val, bool) or val not in (0, 1, 2, 3):
             self._fail(f"preprocess.timestamp_unit={val} invalid "
                        f"(must be 0=s,1=ms,2=us,3=ns)")
         else:
             unit = {0: "s", 1: "ms", 2: "us", 3: "ns"}[val]
             self._pass(f"preprocess.timestamp_unit={val} ({unit}) valid")
 
+    def _check_point_filter(self, cfg):
+        val = self._get(cfg, "point_filter_num", 2)
+        if not isinstance(val, int) or isinstance(val, bool) or val < 1:
+            self._fail(f"point_filter_num={val} must be a positive integer")
+        else:
+            self._pass(f"point_filter_num={val} valid")
+
     def _check_gyr_unit(self, cfg):
+        gap = self._get(cfg, "common.imu_max_gap", 0.05)
+        if isinstance(gap, bool) or not isinstance(gap, (int, float)) or not math.isfinite(gap) or gap <= 0:
+            self._fail("common.imu_max_gap must be finite and positive (seconds)")
+        else:
+            self._pass(f"Runtime IMU maximum gap: {gap} s")
         val = self._get(cfg, "common.imu_gyr_unit")
         if val is None:
             self._warn("common.imu_gyr_unit missing")
@@ -148,18 +166,39 @@ class ConfigChecker:
     def _check_imu_init_window(self, cfg):
         delay = self._get(cfg, "mapping.imu_init_delay", 0.0)
         duration = self._get(cfg, "mapping.imu_init_duration", 0.0)
-        if not isinstance(delay, (int, float)) or delay < 0:
+        limit = self._get(cfg, "mapping.imu_init_max_gyr_norm", 0.0)
+        max_gap = self._get(cfg, "mapping.imu_init_max_gap", 0.05)
+        if isinstance(delay, bool) or not isinstance(delay, (int, float)) or not math.isfinite(delay) or delay < 0:
             self._fail(f"mapping.imu_init_delay={delay} must be non-negative")
-        elif not isinstance(duration, (int, float)) or duration < 0:
+        elif (isinstance(duration, bool) or not isinstance(duration, (int, float)) or
+              not math.isfinite(duration) or duration < 0):
             self._fail(f"mapping.imu_init_duration={duration} must be non-negative")
+        elif isinstance(limit, bool) or not isinstance(limit, (int, float)) or not math.isfinite(limit) or limit < 0:
+            self._fail("mapping.imu_init_max_gyr_norm must be finite and non-negative (rad/s)")
+        elif (isinstance(max_gap, bool) or not isinstance(max_gap, (int, float)) or
+              not math.isfinite(max_gap) or max_gap <= 0):
+            self._fail(f"mapping.imu_init_max_gap={max_gap} must be positive")
+        elif limit > 0 and duration < 0.1:
+            self._fail("IMU initialization guard requires imu_init_duration >= 0.1 s")
         else:
-            self._pass(f"IMU initialization window delay={delay} s, duration={duration} s valid")
+            self._pass(
+                f"IMU initialization window delay={delay} s, duration={duration} s, "
+                f"max_gap={max_gap} s valid")
+            if limit > 0:
+                self._info(f"IMU initialization guard enabled: gyro limit={limit} rad/s")
 
     def _check_blind(self, cfg):
         blind = self._get(cfg, "preprocess.blind")
         det   = self._get(cfg, "mapping.det_range")
         if blind is None:
             self._warn("preprocess.blind missing")
+            return
+        if isinstance(blind, bool) or not isinstance(blind, (int, float)) or not math.isfinite(blind):
+            self._fail(f"preprocess.blind={blind} must be a finite number")
+            return
+        if det is not None and (isinstance(det, bool) or not isinstance(det, (int, float)) or
+                                not math.isfinite(det) or det <= 0):
+            self._fail(f"mapping.det_range={det} must be a finite positive number")
             return
         if blind < 0:
             self._fail(f"preprocess.blind={blind} is negative")
@@ -173,18 +212,32 @@ class ConfigChecker:
         T = self._get(cfg, "mapping.extrinsic_T")
         R = self._get(cfg, "mapping.extrinsic_R")
         if T is None or R is None:
-            self._warn("mapping.extrinsic_T / extrinsic_R missing")
+            self._fail("mapping.extrinsic_T / extrinsic_R missing")
             return
         if not isinstance(T, list) or len(T) != 3:
             self._fail(f"mapping.extrinsic_T must have 3 elements, got {T}")
+            return
         if not isinstance(R, list) or len(R) != 9:
             self._fail(f"mapping.extrinsic_R must have 9 elements, got {R}")
             return
-        # check orthonormality: det(R) ~ 1 and rows unit-length
+        values = T + R
+        if any(isinstance(value, bool) or not isinstance(value, (int, float)) or
+               not math.isfinite(value) for value in values):
+            self._fail("mapping extrinsics must contain only finite numeric values")
+            return
+        rows = [R[0:3], R[3:6], R[6:9]]
+        if any(abs(sum(value * value for value in row) - 1.0) > 1e-3
+               for row in rows):
+            self._fail("mapping.extrinsic_R rows must be unit length")
+            return
+        if any(abs(sum(rows[i][k] * rows[j][k] for k in range(3))) > 1e-3
+               for i in range(3) for j in range(i + 1, 3)):
+            self._fail("mapping.extrinsic_R rows must be orthogonal")
+            return
         det = (R[0]*(R[4]*R[8] - R[5]*R[7])
                - R[1]*(R[3]*R[8] - R[5]*R[6])
                + R[2]*(R[3]*R[7] - R[4]*R[6]))
-        if abs(det - 1.0) > 0.05:
+        if abs(det - 1.0) > 1e-3:
             self._fail(f"mapping.extrinsic_R determinant={det:.4f} (expected ~1.0) "
                        f"— not a valid rotation matrix")
         else:
@@ -195,15 +248,32 @@ class ConfigChecker:
                        "set false if you already have accurate extrinsics")
 
     def _check_pcd_save(self, cfg):
+        leaf = self._get(cfg, "pcd_save.leaf_size", 0.0)
+        mode = self._get(cfg, "pcd_save.mode", "voxel" if isinstance(leaf, (int, float)) and leaf > 0 else "raw")
+        if mode not in ("raw", "voxel", "1hz", "all"):
+            self._fail("pcd_save.mode must be raw, voxel, 1hz, or all")
+        if isinstance(leaf, bool) or not isinstance(leaf, (int, float)) or not math.isfinite(leaf) or leaf < 0:
+            self._fail("pcd_save.leaf_size must be finite and nonnegative")
+        elif mode in ("voxel", "all") and leaf <= 0:
+            self._fail("Voxel export requires a positive pcd_save.leaf_size")
+        interval = self._get(cfg, "pcd_save.interval", -1)
+        if isinstance(interval, bool) or not isinstance(interval, int) or (interval != -1 and interval <= 0):
+            self._fail("pcd_save.interval must be -1 or a positive number of registered frames")
         en = self._get(cfg, "pcd_save.pcd_save_en")
+        if en is not None and not isinstance(en, bool):
+            self._fail(f"pcd_save.pcd_save_en={en} must be true or false")
+            return
         if not en:
             self._info("pcd_save.pcd_save_en=false — PCD will not be saved")
             return
         path = self._get(cfg, "map_file_path", "")
-        if not path:
-            self._info("pcd_save enabled; map_file_path unset → defaults to PCD/scans.pcd")
+        if not isinstance(path, str):
+            self._fail("map_file_path must be a string")
             return
-        # relative paths are resolved against the package root at runtime;
+        if not path:
+            self._info("pcd_save enabled; map_file_path unset → defaults to a new ~/slam_ws/src/slam_maps/fastlio_<run>/map.pcd")
+            return
+        # relative paths are resolved against the process working directory;
         # we can only sanity-check absolute paths here.
         if os.path.isabs(path):
             parent = os.path.dirname(path)
@@ -213,7 +283,7 @@ class ConfigChecker:
                 self._pass(f"pcd_save enabled → {path}")
         else:
             self._info(f"pcd_save enabled; map_file_path='{path}' "
-                       f"(relative to package root)")
+                       f"(relative to the process working directory)")
 
     # ── summary ─────────────────────────────────────────────────────────
     def summary(self):

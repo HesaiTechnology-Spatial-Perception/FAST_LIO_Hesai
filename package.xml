@@ -1,34 +1,46 @@
 <?xml version="1.0"?>
 <package format="3">
   <name>fast_lio</name>
-  <version>0.0.0</version>
+  <version>0.1.0</version>
 
   <description>
-    This is a modified version of LOAM which is original algorithm
-    is described in the following paper:
-    J. Zhang and S. Singh. LOAM: Lidar Odometry and Mapping in Real-time.
-    Robotics: Science and Systems Conference (RSS). Berkeley, CA, July 2014.
+    FAST-LIO2 adaptation for Hesai JT-series and MT60 LiDARs on ROS 2.
+    Publishes LiDAR-inertial odometry, registered point clouds, and optional
+    PCD maps from standard PointCloud2 and Imu input topics.
   </description>
 
-  <maintainer email="dev@livoxtech.com">claydergc</maintainer>
+  <maintainer email="opensource@hesaitech.com">Hesai Technology</maintainer>
 
   <license>GPL-2.0</license>
 
   <author email="zhangji@cmu.edu">Ji Zhang</author>
+  <author>FAST-LIO contributors</author>
+  <author email="opensource@hesaitech.com">Hesai Technology</author>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
   <buildtool_depend>rosidl_default_generators</buildtool_depend>
   <depend>geometry_msgs</depend>
   <depend>nav_msgs</depend>
   <depend>rclcpp</depend>
+  <depend>rclcpp_components</depend>
   <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
   <depend>sensor_msgs</depend>
-  <depend>common_interfaces</depend>
-  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
+  <depend>visualization_msgs</depend>
   <depend>pcl_ros</depend>
   <depend>pcl_conversions</depend>
 
   <exec_depend>rosidl_default_runtime</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+  <exec_depend>ros2bag</exec_depend>
+  <exec_depend>rosbag2_interfaces</exec_depend>
+  <exec_depend>rosbag2_storage_default_plugins</exec_depend>
   <member_of_group>rosidl_interface_packages</member_of_group>
 
   <export>

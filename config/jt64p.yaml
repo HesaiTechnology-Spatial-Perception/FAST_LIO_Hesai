@@ -6,10 +6,11 @@
       time_sync_en: false
       time_offset_lidar_to_imu: 0.0
       imu_gyr_unit: "auto"       # prefer explicit driver unit: "rad" or "deg"; auto is heuristic
+      imu_max_gap: 0.05             # stop on larger sensor-time gaps throughout the run (seconds)
 
     preprocess:
-      lidar_type: 5                # 5: Hesai JT64P
-      scan_line: 64
+      lidar_type: 5                # JT64P selector; uses the JT128-compatible PointCloud2 parser
+      scan_line: 128               # driver output uses rings 0-127, same layout as JT128
       timestamp_unit: 0             # 0-second, 1-millisecond, 2-microsecond, 3-nanosecond
       blind: 0.5
 
@@ -37,7 +38,8 @@
     pcd_save:
       pcd_save_en: false
       interval: -1
-      leaf_size: 0.0           # >0: voxel-downsample the saved map (m); bounds memory on long runs
+      mode: 1hz             # raw | voxel | 1hz | all; all also writes _origin and _1hz
+      leaf_size: 0.1          # weighted voxel centroids; does not alter the estimator
 
     trajectory_save:
       tum_en: false
